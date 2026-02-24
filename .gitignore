@@ -17,6 +17,10 @@ build/
 .ruff_cache/
 *.pth
 
+# Slurm
+slurm_io/*.err
+slurm_io/*.out
+
 # LaTeX
 *.aux
 *.bbl
