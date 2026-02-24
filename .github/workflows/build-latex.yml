@@ -30,6 +30,7 @@ jobs:
       - name: Render Mermaid diagram
         run: |
           npx -y @mermaid-js/mermaid-cli \
+            -p .github/puppeteer-config.json \
             -i latex/figures/methodology.mmd \
             -o latex/figures/methodology.png
 
