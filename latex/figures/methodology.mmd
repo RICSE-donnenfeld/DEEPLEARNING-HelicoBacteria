@@ -1,0 +1,14 @@
+flowchart LR
+    A["Quiron Salut data"] --> B["Patch extraction (256x256)"]
+    B --> C["Patch-level model training"]
+    C --> D["CNN (supervised)"]
+    C --> E["Autoencoder (healthy-only)"]
+    D --> F["Patch predictions"]
+    E --> F
+    F --> G["Patient-level aggregation"]
+    G --> H["Patient diagnosis"]
+
+    style A fill:#e0f2fe,stroke:#0284c7,stroke-width:1px,color:#0f172a
+    style D fill:#dcfce7,stroke:#16a34a,stroke-width:1px,color:#0f172a
+    style E fill:#fef3c7,stroke:#d97706,stroke-width:1px,color:#0f172a
+    style H fill:#ede9fe,stroke:#7c3aed,stroke-width:1px,color:#0f172a

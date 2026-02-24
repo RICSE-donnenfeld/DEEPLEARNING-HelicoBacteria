@@ -1,0 +1,26 @@
+flowchart TB
+  subgraph prep [Data preparation]
+    Crop["Crop patches along tissue border"]
+    Norm["Resize 256x256, normalize"]
+    Annot["CrossValidation/Annotated"]
+    Crop --> Norm
+    Norm --> Annot
+  end
+
+  subgraph patch [Patch classification]
+    CNN["CNN: supervised, CE loss"]
+    AE["AE: healthy-only, MSE reconstruction"]
+    Annot --> CNN
+    Annot --> AE
+    CNN --> PredCNN["P(unhealthy) > 0.5"]
+    AE --> Score["s(x) = reconstruction error"]
+    Score --> Tau["tau_patch from ROC"]
+    Tau --> PredAE["s(x) > tau_patch"]
+    
+  end
+
+  subgraph patient [Patient diagnosis]
+    Todo["To be determined"]
+    PredCNN --> Todo
+    PredAE --> Todo
+  end

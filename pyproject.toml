@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "helico-cnn-classifier"
+version = "0.1.0"
+description = "Simple CNN training and inference for HelicoDataSet healthy/unhealthy patch classification."
+readme = "README.md"
+dependencies = [
+  "torch",
+  "torchvision",
+  "Pillow",
+  "scipy",
+  "matplotlib",
+  "scikit-learn"
+]
+
+

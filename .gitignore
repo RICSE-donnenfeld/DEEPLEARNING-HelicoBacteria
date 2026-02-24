@@ -1,0 +1,45 @@
+# Data (large / not in repo)
+HelicoDataSet/
+helico_cnn_classifier.egg-info/
+
+# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.pth
+
+# LaTeX
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# Generated outputs
+output/
+slurm_io/
+mermaid/out/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Misc
+helico_cnn_classifier.egg-info
+
+.Trash-1000/
