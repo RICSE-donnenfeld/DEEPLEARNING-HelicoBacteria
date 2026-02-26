@@ -28,6 +28,7 @@ Usage:
 from pathlib import Path
 from typing import Tuple, Optional, List
 import argparse
+import json
 
 import csv
 import random
@@ -312,6 +313,100 @@ def split_dataset_by_patient(
     return Subset(dataset, train_indices), Subset(dataset, val_indices)
 
 
+def patient_stratified_kfold_subsets(
+    dataset: HelicoPatchDataset,
+    n_splits: int,
+    seed: int,
+) -> list[Tuple[Subset, Subset]]:
+    """
+    Build patient-level folds. Stratification uses a patient-level binary label:
+    1 if the patient has at least one positive patch, else 0.
+    """
+    if n_splits < 2:
+        raise ValueError("n_splits must be >= 2 for k-fold.")
+
+    unique_patients = sorted(set(dataset.patient_ids))
+    if len(unique_patients) < n_splits:
+        raise ValueError(
+            f"Cannot use {n_splits} folds with only {len(unique_patients)} patients."
+        )
+
+    patient_to_label: dict[str, int] = {}
+    for i, pat_id in enumerate(dataset.patient_ids):
+        label = dataset.samples[i][1]
+        patient_to_label[pat_id] = max(patient_to_label.get(pat_id, 0), int(label))
+
+    patient_list = unique_patients
+    y_patients = [patient_to_label[pat] for pat in patient_list]
+
+    try:
+        from sklearn.model_selection import StratifiedKFold
+    except ImportError as exc:
+        raise ImportError(
+            "k-fold requires scikit-learn. Install it with: pip install scikit-learn"
+        ) from exc
+
+    class_counts = {
+        0: sum(1 for y in y_patients if y == 0),
+        1: sum(1 for y in y_patients if y == 1),
+    }
+    use_stratified = min(class_counts.values()) >= n_splits
+    if not use_stratified:
+        print(
+            "Warning: Not enough patients in one class for stratified folds. "
+            "Falling back to non-stratified KFold."
+        )
+        from sklearn.model_selection import KFold
+
+        splitter = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
+        split_iter = splitter.split(patient_list)
+    else:
+        splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+        split_iter = splitter.split(patient_list, y_patients)
+
+    folds: list[Tuple[Subset, Subset]] = []
+    for train_patient_idx, val_patient_idx in split_iter:
+        train_patients = {patient_list[i] for i in train_patient_idx}
+        val_patients = {patient_list[i] for i in val_patient_idx}
+
+        train_indices = [
+            i for i, pat_id in enumerate(dataset.patient_ids) if pat_id in train_patients
+        ]
+        val_indices = [
+            i for i, pat_id in enumerate(dataset.patient_ids) if pat_id in val_patients
+        ]
+        if not train_indices or not val_indices:
+            raise RuntimeError("k-fold split produced an empty train or validation set.")
+        folds.append((Subset(dataset, train_indices), Subset(dataset, val_indices)))
+
+    return folds
+
+
+def _binary_metrics_from_preds(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
+    tp = int(np.sum((y_true == 1) & (y_pred == 1)))
+    tn = int(np.sum((y_true == 0) & (y_pred == 0)))
+    fp = int(np.sum((y_true == 0) & (y_pred == 1)))
+    fn = int(np.sum((y_true == 1) & (y_pred == 0)))
+    total = max(1, tp + tn + fp + fn)
+
+    accuracy = (tp + tn) / total
+    precision = tp / max(1, tp + fp)
+    recall = tp / max(1, tp + fn)
+    specificity = tn / max(1, tn + fp)
+    f1 = 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
+    return {
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "specificity": specificity,
+        "f1": f1,
+        "tp": float(tp),
+        "tn": float(tn),
+        "fp": float(fp),
+        "fn": float(fn),
+    }
+
+
 def subset_healthy_only(dataset: Subset, base_dataset: HelicoPatchDataset) -> Subset:
     """Restrict to samples with label 0 (healthy)."""
     indices = [i for i in dataset.indices if base_dataset.samples[i][1] == 0]
@@ -424,6 +519,24 @@ def main() -> None:
         default="max_local",
         help="Aggregate pixel error: max_local (default, best for focal H. pylori) or mean.",
     )
+    parser.add_argument(
+        "--k-folds",
+        type=int,
+        default=1,
+        help="Number of patient-level folds for cross-validation (training mode only). Default: 1.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for split or k-fold shuffling. Default: 42.",
+    )
+    parser.add_argument(
+        "--cv-output-dir",
+        type=str,
+        default=str(PROJECT_ROOT / "cv" / "autoencoder"),
+        help="Directory for k-fold checkpoints/thresholds/metrics when --k-folds > 1.",
+    )
     args = parser.parse_args()
 
     selected_modes = [
@@ -440,6 +553,16 @@ def main() -> None:
         )
     if args.epochs < 1:
         raise ValueError("--epochs must be >= 1.")
+    if args.k_folds < 1:
+        raise ValueError("--k-folds must be >= 1.")
+    if args.k_folds > 1 and any(selected_modes):
+        raise ValueError(
+            "--k-folds > 1 is supported only in training mode (no eval/export/validate flags)."
+        )
+    if args.k_folds > 1 and args.checkpoint is not None:
+        raise ValueError(
+            "For k-fold, do not pass --checkpoint. Per-fold checkpoints are written under --cv-output-dir."
+        )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ckpt_path = Path(args.checkpoint) if args.checkpoint else CHECKPOINT_PATH
@@ -529,21 +652,13 @@ def main() -> None:
 
     transform = get_transform()
     full_dataset = HelicoPatchDataset(csv_path=csv_path, images_root=ANNOTATED_ROOT, transform=transform)
-    train_sub, val_sub = split_dataset_by_patient(full_dataset, val_ratio=0.2, seed=42)
-
-    # Train only on healthy patches
-    train_healthy = subset_healthy_only(train_sub, full_dataset)
-    n_healthy = len(train_healthy)
-    print(f"Training on healthy patches only: {n_healthy} samples")
-
-    batch_size = 32
-    train_loader = DataLoader(train_healthy, batch_size=batch_size, shuffle=True, num_workers=2)
-    val_loader = DataLoader(val_sub, batch_size=batch_size, shuffle=False, num_workers=2)
+    train_sub, val_sub = split_dataset_by_patient(full_dataset, val_ratio=0.2, seed=args.seed)
 
     # ----- Validate-only: load checkpoint, compute ROC, print threshold -----
     if args.validate_only:
         if not ckpt_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+        val_loader = DataLoader(val_sub, batch_size=32, shuffle=False, num_workers=2)
         model = PatchAutoencoder().to(device)
         model.load_state_dict(torch.load(ckpt_path, map_location=device, weights_only=True))
         agg = args.error_aggregation
@@ -562,35 +677,140 @@ def main() -> None:
         )
         return
 
-    # ----- Training -----
-    model = PatchAutoencoder().to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    best_val_loss = float("inf")
+    def train_single_split(
+        train_subset: Subset,
+        val_subset: Subset,
+        checkpoint_out: Path,
+        threshold_out: Path,
+    ) -> dict[str, float]:
+        train_healthy = subset_healthy_only(train_subset, full_dataset)
+        n_healthy = len(train_healthy)
+        if n_healthy == 0:
+            raise RuntimeError(
+                "No healthy training samples in this fold. "
+                "Try fewer folds or a different seed."
+            )
+        print(f"Training on healthy patches only: {n_healthy} samples")
 
-    agg = args.error_aggregation
-    for epoch in range(1, args.epochs + 1):
-        train_loss = train_one_epoch(model, train_loader, optimizer, device)
-        model.eval()
-        val_errors, val_labels = compute_reconstruction_errors(model, val_loader, device, aggregation=agg)
-        val_loss = float(np.mean(val_errors))
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            torch.save(model.state_dict(), ckpt_path)
+        batch_size = 32
+        train_loader = DataLoader(train_healthy, batch_size=batch_size, shuffle=True, num_workers=2)
+        val_loader = DataLoader(val_subset, batch_size=batch_size, shuffle=False, num_workers=2)
+
+        model = PatchAutoencoder().to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        best_val_loss = float("inf")
+        agg = args.error_aggregation
+
+        for epoch in range(1, args.epochs + 1):
+            train_loss = train_one_epoch(model, train_loader, optimizer, device)
+            model.eval()
+            val_errors, val_labels = compute_reconstruction_errors(
+                model, val_loader, device, aggregation=agg
+            )
+            val_loss = float(np.mean(val_errors))
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                checkpoint_out.parent.mkdir(parents=True, exist_ok=True)
+                torch.save(model.state_dict(), checkpoint_out)
+            threshold, tpr, fpr = roc_threshold_optimal(val_errors, val_labels, positive_class=1)
+            pred = (val_errors > threshold).astype(np.int64)
+            val_acc = float((pred == val_labels).mean())
+            print(
+                f"Epoch {epoch}/{args.epochs} train_loss: {train_loss:.6f} val_loss: {val_loss:.6f} "
+                f"threshold: {threshold:.4f} TPR: {tpr:.3f} FPR: {fpr:.3f} val_acc: {val_acc:.4f}"
+            )
+
+        model.load_state_dict(torch.load(checkpoint_out, map_location=device, weights_only=True))
+        val_errors, val_labels = compute_reconstruction_errors(
+            model, val_loader, device, aggregation=agg
+        )
         threshold, tpr, fpr = roc_threshold_optimal(val_errors, val_labels, positive_class=1)
+        threshold_out.parent.mkdir(parents=True, exist_ok=True)
+        threshold_out.write_text(f"{threshold}\n{agg}\n")
         pred = (val_errors > threshold).astype(np.int64)
-        val_acc = (pred == val_labels).mean()
+        metrics = _binary_metrics_from_preds(val_labels.astype(np.int64), pred)
+        metrics["val_loss_best"] = best_val_loss
+        metrics["threshold"] = threshold
+        metrics["tpr"] = tpr
+        metrics["fpr"] = fpr
+        print(f"Saved best checkpoint (by val_loss) to {checkpoint_out}")
         print(
-            f"Epoch {epoch}/{args.epochs} train_loss: {train_loss:.6f} val_loss: {val_loss:.6f} "
-            f"threshold: {threshold:.4f} TPR: {tpr:.3f} FPR: {fpr:.3f} val_acc: {val_acc:.4f}"
+            f"Optimal threshold (closest to FPR=0, TPR=1): {threshold:.6f} "
+            f"(aggregation: {agg}, saved to {threshold_out})"
+        )
+        return metrics
+
+    if args.k_folds == 1:
+        # ----- Training (single split) -----
+        train_single_split(
+            train_sub,
+            val_sub,
+            checkpoint_out=ckpt_path,
+            threshold_out=THRESHOLD_PATH,
+        )
+        return
+
+    # ----- Training (k-fold) -----
+    cv_root = Path(args.cv_output_dir)
+    cv_root.mkdir(parents=True, exist_ok=True)
+    folds = patient_stratified_kfold_subsets(
+        full_dataset,
+        n_splits=args.k_folds,
+        seed=args.seed,
+    )
+    fold_metrics: list[dict[str, float]] = []
+    print(f"Running {args.k_folds}-fold patient-level CV for autoencoder")
+
+    for fold_idx, (fold_train, fold_val) in enumerate(folds, start=1):
+        fold_dir = cv_root / f"fold_{fold_idx}"
+        fold_dir.mkdir(parents=True, exist_ok=True)
+        print(f"\n=== Fold {fold_idx}/{args.k_folds} ===")
+        metrics = train_single_split(
+            fold_train,
+            fold_val,
+            checkpoint_out=fold_dir / "autoencoder_model.pth",
+            threshold_out=fold_dir / "autoencoder_threshold.txt",
+        )
+        metrics["fold"] = float(fold_idx)
+        (fold_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
+        fold_metrics.append(metrics)
+        print(
+            "Fold metrics - "
+            f"acc: {metrics['accuracy']:.4f}, prec: {metrics['precision']:.4f}, "
+            f"recall: {metrics['recall']:.4f}, spec: {metrics['specificity']:.4f}, "
+            f"f1: {metrics['f1']:.4f}"
         )
 
-    model.load_state_dict(torch.load(ckpt_path, map_location=device))
-    val_errors, val_labels = compute_reconstruction_errors(model, val_loader, device, aggregation=agg)
-    threshold, tpr, fpr = roc_threshold_optimal(val_errors, val_labels, positive_class=1)
-    THRESHOLD_PATH.parent.mkdir(parents=True, exist_ok=True)
-    THRESHOLD_PATH.write_text(f"{threshold}\n{agg}\n")
-    print(f"Saved best checkpoint (by val_loss) to {ckpt_path}")
-    print(f"Optimal threshold (closest to FPR=0, TPR=1): {threshold:.6f} (aggregation: {agg}, saved to {THRESHOLD_PATH})")
+    summary: dict[str, dict[str, float] | int] = {
+        "k_folds": args.k_folds,
+        "seed": args.seed,
+        "metrics": {},
+    }
+    keys = [
+        "accuracy",
+        "precision",
+        "recall",
+        "specificity",
+        "f1",
+        "val_loss_best",
+        "threshold",
+        "tpr",
+        "fpr",
+    ]
+    for key in keys:
+        values = [m[key] for m in fold_metrics]
+        mean = sum(values) / len(values)
+        var = sum((x - mean) ** 2 for x in values) / len(values)
+        summary["metrics"][key] = {
+            "mean": mean,
+            "std": var ** 0.5,
+        }
+    summary_path = cv_root / "summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2))
+    print(f"\nSaved CV summary to {summary_path}")
+    for key in keys:
+        row = summary["metrics"][key]
+        print(f"{key}: {row['mean']:.4f} +- {row['std']:.4f}")
 
 
 if __name__ == "__main__":

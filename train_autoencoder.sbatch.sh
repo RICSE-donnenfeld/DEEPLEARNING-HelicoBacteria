@@ -19,4 +19,4 @@ cd /hhome/ricse04/autoencoder
 source .venv/bin/activate
 
 python -c "import torch; print('CUDA available:', torch.cuda.is_available()); print('GPU count:', torch.cuda.device_count())"
-python model_autoencoder.py --epochs 150
+python model_autoencoder.py --epochs 150 --k-folds 5 --seed 42

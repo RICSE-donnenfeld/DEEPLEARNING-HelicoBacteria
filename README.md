@@ -26,7 +26,7 @@ and uses:
 ### Train CNN classifier
 
 ```bash
-python model.py --epochs 150
+python model_classifier.py --epochs 150
 ```
 
 Saved checkpoint: `cnn_model.pth`
@@ -40,17 +40,29 @@ python model_autoencoder.py --epochs 150
 Saved checkpoint: `autoencoder_model.pth`  
 Saved threshold file: `autoencoder_threshold.txt`
 
+### Run patient-level k-fold cross-validation
+
+```bash
+python model_classifier.py --epochs 150 --k-folds 5 --seed 42
+python model_autoencoder.py --epochs 150 --k-folds 5 --seed 42
+```
+
+Outputs are saved under:
+
+- `cv/cnn/fold_*/` and `cv/cnn/summary.json`
+- `cv/autoencoder/fold_*/` and `cv/autoencoder/summary.json`
+
 ## 2) Run on cluster (Slurm)
 
 Two job scripts are provided:
 
-- `train.sbatch.sh` (CNN)
+- `train_classifier.sbatch.sh` (CNN)
 - `train_autoencoder.sbatch.sh` (autoencoder)
 
 ### Submit jobs
 
 ```bash
-sbatch train.sbatch.sh
+sbatch train_classifier.sbatch.sh
 sbatch train_autoencoder.sbatch.sh
 ```
 
