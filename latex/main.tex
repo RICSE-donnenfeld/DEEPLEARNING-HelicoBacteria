@@ -149,7 +149,16 @@ The autoencoder is trained only on healthy patches and learns to reconstruct nor
 where $C=3$, $H=W=256$. The per-patch anomaly score $s(x)$ is the reconstruction error. We use either the mean over all pixels or the maximum over $8\times8$ spatial cell means (\texttt{max\_local}) so that small anomalous regions contribute more. A patch is predicted positive if $s(x) > \tau_{patch}$. The threshold $\tau_{patch}$ is chosen on the validation set as the point on the ROC curve closest to (FPR$=0$, TPR$=1$), implemented as \texttt{roc\_threshold\_optimal}.
 
 \subsection{Patient-level aggregation}
-For each patient $p$ with $N_p$ patches and binary patch predictions $\hat{z}_i \in \{0,1\}$, we define the contamination ratio $r_p = \frac{1}{N_p}\sum_{i=1}^{N_p} \hat{z}_i$. The patient is predicted positive if $r_p > \tau_{patient}$. Both $\tau_{patch}$ and $\tau_{patient}$ are selected using cross-validation data only and held fixed for hold-out evaluation.
+For each patient $p$ with $N_p$ patches and binary patch predictions $\hat{z}_i \in \{0,1\}$, we define the contamination ratio
+\[
+r_p = \frac{1}{N_p}\sum_{i=1}^{N_p} \hat{z}_i.
+\]
+The patient is predicted positive if $r_p > \tau_{patient}$. In our implementation, $\hat{z}_i$ is derived from a patch-level score and threshold:
+\begin{itemize}
+  \item CNN: score = $P(\mathrm{unhealthy})$, threshold $\tau_{patch}^{cnn}=0.5$ (default).
+  \item AE: score = reconstruction error (\texttt{mean} or \texttt{max\_local}), threshold $\tau_{patch}^{ae}$ from ROC (\texttt{autoencoder\_threshold.txt} or fold-specific threshold files).
+\end{itemize}
+The patient threshold $\tau_{patient}$ is selected on training patients by maximizing patient-level F1 over candidate ratio thresholds, then evaluated on validation patients. The same protocol is applied fold-by-fold in patient-level CV, and then on Hold-out.
 
 % ==========================================================
 \section{Implementation Details}
@@ -163,13 +172,17 @@ The autoencoder began with a shallower encoder (32$\to$64$\to$128$\to$256$\to$25
 \subsection{Code structure}
 The codebase is organised as follows: \texttt{model\_classifier.py} defines and trains the CNN; \texttt{model\_autoencoder.py} defines and trains the autoencoder (including ROC-based threshold selection); \texttt{src/helico/cv\_utils.py} contains shared patient-level split and metric helpers used by both models; \texttt{compare\_patch\_classifiers.py} evaluates both models on the same validation split and saves confusion-matrix and ROC figures.
 
-Training on a GPU cluster is launched via \texttt{train\_classifier.sbatch.sh} and \texttt{train\_autoencoder.sbatch.sh} (legacy \texttt{train.sbatch.sh} is kept as a compatibility script). Dataset paths follow the \texttt{HelicoDataSet/} layout (CrossValidation/Annotated, HoldOut). Diagnostics and CV interpretation scripts (\texttt{analyze\_cv\_metrics.py}, \texttt{analyze\_ae\_fold\_diagnostics.py}) produce plots and robust-statistics summaries under \texttt{cv/plots/}. Reproducibility is ensured by fixed random seeds, patient-level splitting, and per-fold metric/checkpoint logging.
+Patient-level diagnosis is implemented in \texttt{patient\_level\_pipeline.py}. This script supports two modes: (i) single-checkpoint mode, and (ii) fold-consistent mode (\texttt{--use-cv-fold-checkpoints}) that loads fold-specific models from \texttt{cv/cnn/fold\_i/} and \texttt{cv/autoencoder/fold\_i/} (including AE fold thresholds). Outputs are written under \texttt{output/patient\_level/<model>/}: fold metrics, Hold-out-per-fold metrics, and summary statistics.
+
+Training on a GPU cluster is launched via \texttt{train\_classifier.sbatch.sh} and \texttt{train\_autoencoder.sbatch.sh} (legacy \texttt{train.sbatch.sh} is kept as a compatibility script). Patient-level jobs are launched via \texttt{patient\_cnn\_fold.sbatch.sh}, \texttt{patient\_autoencoder\_fold.sbatch.sh}, and \texttt{patient\_plots.sbatch.sh}. Dataset paths follow the \texttt{HelicoDataSet/} layout (CrossValidation/Annotated, CrossValidation/Cropped, HoldOut). Diagnostics scripts (\texttt{analyze\_cv\_metrics.py}, \texttt{analyze\_ae\_fold\_diagnostics.py}, \texttt{analyze\_patient\_level\_metrics.py}) produce plots and robust-statistics summaries.
 
 % ==========================================================
 \section{Experimental Design}
 \label{sec:experiments}
 
 We split data at the \textbf{patient level} so that a patient never appears in both train and validation folds. The current evaluation uses \textbf{5-fold patient-level cross-validation} (\texttt{--k-folds 5}, \texttt{seed=42}) for both CNN and AE. For each fold, checkpoints and metrics are stored under \texttt{cv/cnn/fold\_i/} and \texttt{cv/autoencoder/fold\_i/}. The Hold-out set (116 patients) remains reserved for a single final evaluation after all model and threshold design choices are fixed.
+
+For patient-level diagnosis, we compute contamination ratios on \texttt{CrossValidation/Cropped} and select fold-wise $\tau_{patient}$ from training patients only (best F1). We then evaluate on validation patients and additionally report Hold-out metrics per fold using the same fold model and $\tau_{patient}$. This avoids mixing fold artifacts and keeps patch-level and patient-level protocols consistent.
 
 We report fold-wise and aggregate patch-level metrics (accuracy, precision, recall, specificity, F1), using both mean$\pm$std and robust summaries (median/IQR). For AE we additionally report threshold behavior, TPR and FPR by fold.
 
@@ -250,7 +263,7 @@ Robust summaries confirm that mean/std is distorted by outliers. For AE threshol
 \end{figure}
 
 \subsection{Patient-level}
-Patient-level performance (after aggregating patch predictions per patient and applying $\tau_{patient}$) will be reported once thresholds are fixed and the hold-out set is evaluated (Table~\ref{tab:patient_results}).
+Patient-level performance is computed by \texttt{patient\_level\_pipeline.py}. The pipeline stores fold CV metrics and Hold-out-per-fold metrics in JSON files under \texttt{output/patient\_level/}. Plots and text summaries are generated by \texttt{analyze\_patient\_level\_metrics.py}. Table~\ref{tab:patient_results} is the target format for final values after cluster execution completes.
 \begin{table}[H]
 \centering
 \begin{tabular}{lcccc}
@@ -405,6 +418,9 @@ for patient in patients:
 sbatch train_classifier.sbatch.sh
 sbatch train_autoencoder.sbatch.sh
 python compare_patch_classifiers.py
+sbatch patient_cnn_fold.sbatch.sh
+sbatch patient_autoencoder_fold.sbatch.sh
+sbatch patient_plots.sbatch.sh
 \end{lstlisting}
 
 \end{document}
