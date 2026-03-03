@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Compare patch-level classifiers: CNN (model.py) vs Autoencoder (model_autoencoder.py).
+Compare patch-level classifiers: CNN (model_classifier.py) vs Autoencoder (model_autoencoder.py).
 
 Runs both models on the same validation set and reports accuracy, precision,
 a confusion matrix figure (output/compare_confusion.png), and ROC curves (output/compare_roc.png).
@@ -36,7 +36,7 @@ from model_autoencoder import (
     get_transform,
     split_dataset_by_patient,
 )
-from model import SimpleCNN
+from model_classifier import SimpleCNN
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -45,7 +45,7 @@ if not OUTPUT_ROOT.exists():
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 HELICO_ROOT = PROJECT_ROOT / "HelicoDataSet"
 VAL_RATIO = 0.2
-SEED = 1
+SEED = 42
 
 
 def compute_cnn_probs(model: torch.nn.Module, loader: DataLoader, device: torch.device):

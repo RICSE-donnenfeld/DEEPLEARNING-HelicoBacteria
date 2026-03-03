@@ -1,0 +1,31 @@
+AE fold diagnostics report
+=========================
+
+Pooled global threshold (OOF ROC): 0.061576
+Global ROC point: TPR=0.8295, FPR=0.2373
+
+Per-fold health-train counts and local thresholds:
+- fold 1: train healthy=931/1923 (0.484), val pos=468, val neg=228, local threshold=0.043619, local f1=0.8633, global f1=0.7652
+- fold 2: train healthy=576/1779 (0.324), val pos=257, val neg=583, local threshold=0.071689, local f1=0.8473, global f1=0.8208
+- fold 3: train healthy=1029/2300 (0.447), val pos=189, val neg=130, local threshold=0.787113, local f1=0.7108, global f1=0.7470
+- fold 4: train healthy=1055/2221 (0.475), val pos=294, val neg=104, local threshold=0.070464, local f1=0.8550, global f1=0.8658
+- fold 5: train healthy=1045/2253 (0.464), val pos=252, val neg=114, local threshold=0.073199, local f1=0.9221, global f1=0.9336
+
+Robust stats (median [Q1, Q3], IQR):
+[cnn]
+  - accuracy: median=0.8997 [0.8995, 0.9560], IQR=0.0565, mean+-std=0.9108+-0.0484
+  - precision: median=0.9701 [0.9508, 0.9878], IQR=0.0370, mean+-std=0.9706+-0.0197
+  - recall: median=0.9027 [0.8571, 0.9150], IQR=0.0578, mean+-std=0.8783+-0.0717
+  - specificity: median=0.9737 [0.9615, 0.9794], IQR=0.0179, mean+-std=0.9532+-0.0499
+  - f1: median=0.9261 [0.9101, 0.9308], IQR=0.0207, mean+-std=0.9201+-0.0382
+  - val_loss_best: median=0.2794 [0.2730, 0.3707], IQR=0.0978, mean+-std=0.6312+-0.7400
+[autoencoder]
+  - accuracy: median=0.8261 [0.8015, 0.8962], IQR=0.0947, mean+-std=0.8246+-0.0736
+  - precision: median=0.9161 [0.8252, 0.9283], IQR=0.1031, mean+-std=0.8836+-0.0619
+  - recall: median=0.8162 [0.7925, 0.8929], IQR=0.1003, mean+-std=0.8065+-0.1009
+  - specificity: median=0.8465 [0.8269, 0.8971], IQR=0.0702, mean+-std=0.8563+-0.0380
+  - f1: median=0.8550 [0.8473, 0.8633], IQR=0.0160, mean+-std=0.8397+-0.0696
+  - val_loss_best: median=0.1133 [0.0739, 0.1265], IQR=0.0526, mean+-std=0.2665+-0.3399
+  - threshold: median=0.0717 [0.0705, 0.0732], IQR=0.0027, mean+-std=0.2092+-0.2892
+  - tpr: median=0.8184 [0.7959, 0.8968], IQR=0.1009, mean+-std=0.8113+-0.0985
+  - fpr: median=0.1535 [0.1029, 0.1731], IQR=0.0702, mean+-std=0.1437+-0.0380

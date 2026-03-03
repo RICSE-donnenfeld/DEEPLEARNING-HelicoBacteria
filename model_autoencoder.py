@@ -29,9 +29,9 @@ from pathlib import Path
 from typing import Tuple, Optional, List
 import argparse
 import json
+import sys
 
 import csv
-import random
 
 import torch
 from torch import nn
@@ -42,6 +42,16 @@ import numpy as np
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+SRC_ROOT = PROJECT_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from helico.cv_utils import (  # type: ignore[import-not-found]  # noqa: E402
+    binary_metrics_from_preds,
+    dataset_patient_stratified_kfold_subsets,
+    dataset_split_by_patient,
+)
+
 HELICO_ROOT = PROJECT_ROOT / "HelicoDataSet"
 ANNOTATED_ROOT = HELICO_ROOT / "CrossValidation" / "Annotated"
 CHECKPOINT_PATH = PROJECT_ROOT / "autoencoder_model.pth"
@@ -287,30 +297,8 @@ def split_dataset_by_patient(
     val_ratio: float = 0.2,
     seed: int = 1,
 ) -> Tuple[Subset, Subset]:
-    """Patient-level split; same as model.py."""
-    unique_patients = sorted(set(dataset.patient_ids))
-    if len(unique_patients) < 2:
-        raise RuntimeError("Need at least 2 distinct patients for train/val split.")
-
-    rng = random.Random(seed)
-    rng.shuffle(unique_patients)
-    val_patient_count = max(1, int(len(unique_patients) * val_ratio))
-    if val_patient_count >= len(unique_patients):
-        val_patient_count = len(unique_patients) - 1
-    val_patients = set(unique_patients[:val_patient_count])
-    train_patients = set(unique_patients[val_patient_count:])
-
-    train_indices = [i for i, pat_id in enumerate(dataset.patient_ids) if pat_id in train_patients]
-    val_indices = [i for i, pat_id in enumerate(dataset.patient_ids) if pat_id in val_patients]
-
-    if not train_indices or not val_indices:
-        raise RuntimeError("Patient-level split produced empty train or validation set.")
-
-    print(
-        f"Patient-level split: {len(train_patients)} train / {len(val_patients)} val patients, "
-        f"{len(train_indices)} / {len(val_indices)} patches"
-    )
-    return Subset(dataset, train_indices), Subset(dataset, val_indices)
+    """Patient-level train/val split using shared utility."""
+    return dataset_split_by_patient(dataset, val_ratio=val_ratio, seed=seed)
 
 
 def patient_stratified_kfold_subsets(
@@ -318,93 +306,12 @@ def patient_stratified_kfold_subsets(
     n_splits: int,
     seed: int,
 ) -> list[Tuple[Subset, Subset]]:
-    """
-    Build patient-level folds. Stratification uses a patient-level binary label:
-    1 if the patient has at least one positive patch, else 0.
-    """
-    if n_splits < 2:
-        raise ValueError("n_splits must be >= 2 for k-fold.")
-
-    unique_patients = sorted(set(dataset.patient_ids))
-    if len(unique_patients) < n_splits:
-        raise ValueError(
-            f"Cannot use {n_splits} folds with only {len(unique_patients)} patients."
-        )
-
-    patient_to_label: dict[str, int] = {}
-    for i, pat_id in enumerate(dataset.patient_ids):
-        label = dataset.samples[i][1]
-        patient_to_label[pat_id] = max(patient_to_label.get(pat_id, 0), int(label))
-
-    patient_list = unique_patients
-    y_patients = [patient_to_label[pat] for pat in patient_list]
-
-    try:
-        from sklearn.model_selection import StratifiedKFold
-    except ImportError as exc:
-        raise ImportError(
-            "k-fold requires scikit-learn. Install it with: pip install scikit-learn"
-        ) from exc
-
-    class_counts = {
-        0: sum(1 for y in y_patients if y == 0),
-        1: sum(1 for y in y_patients if y == 1),
-    }
-    use_stratified = min(class_counts.values()) >= n_splits
-    if not use_stratified:
-        print(
-            "Warning: Not enough patients in one class for stratified folds. "
-            "Falling back to non-stratified KFold."
-        )
-        from sklearn.model_selection import KFold
-
-        splitter = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
-        split_iter = splitter.split(patient_list)
-    else:
-        splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-        split_iter = splitter.split(patient_list, y_patients)
-
-    folds: list[Tuple[Subset, Subset]] = []
-    for train_patient_idx, val_patient_idx in split_iter:
-        train_patients = {patient_list[i] for i in train_patient_idx}
-        val_patients = {patient_list[i] for i in val_patient_idx}
-
-        train_indices = [
-            i for i, pat_id in enumerate(dataset.patient_ids) if pat_id in train_patients
-        ]
-        val_indices = [
-            i for i, pat_id in enumerate(dataset.patient_ids) if pat_id in val_patients
-        ]
-        if not train_indices or not val_indices:
-            raise RuntimeError("k-fold split produced an empty train or validation set.")
-        folds.append((Subset(dataset, train_indices), Subset(dataset, val_indices)))
-
-    return folds
+    """Patient-level stratified k-fold split using shared utility."""
+    return dataset_patient_stratified_kfold_subsets(dataset, n_splits=n_splits, seed=seed)
 
 
 def _binary_metrics_from_preds(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
-    tp = int(np.sum((y_true == 1) & (y_pred == 1)))
-    tn = int(np.sum((y_true == 0) & (y_pred == 0)))
-    fp = int(np.sum((y_true == 0) & (y_pred == 1)))
-    fn = int(np.sum((y_true == 1) & (y_pred == 0)))
-    total = max(1, tp + tn + fp + fn)
-
-    accuracy = (tp + tn) / total
-    precision = tp / max(1, tp + fp)
-    recall = tp / max(1, tp + fn)
-    specificity = tn / max(1, tn + fp)
-    f1 = 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
-    return {
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
-        "specificity": specificity,
-        "f1": f1,
-        "tp": float(tp),
-        "tn": float(tn),
-        "fp": float(fp),
-        "fn": float(fn),
-    }
+    return binary_metrics_from_preds(y_true.tolist(), y_pred.tolist())
 
 
 def subset_healthy_only(dataset: Subset, base_dataset: HelicoPatchDataset) -> Subset:
@@ -781,7 +688,7 @@ def main() -> None:
             f"f1: {metrics['f1']:.4f}"
         )
 
-    summary: dict[str, dict[str, float] | int] = {
+    summary: dict[str, object] = {
         "k_folds": args.k_folds,
         "seed": args.seed,
         "metrics": {},

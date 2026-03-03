@@ -1,0 +1,19 @@
+Cross-validation fold interpretation
+======================================
+
+[cnn]
+- F1 mean+-std: 0.9201 +- 0.0382
+- Accuracy mean+-std: 0.9108 +- 0.0484
+- Recall mean+-std: 0.8783 +- 0.0717
+- Val loss mean+-std: 0.6312 +- 0.7400
+- Best fold by F1: fold 5 (F1=0.9759, acc=0.9672)
+- Worst fold by F1: fold 1 (F1=0.8575, acc=0.8319)
+
+[autoencoder]
+- F1 mean+-std: 0.8397 +- 0.0696
+- Accuracy mean+-std: 0.8246 +- 0.0736
+- Recall mean+-std: 0.8065 +- 0.1009
+- Val loss mean+-std: 0.2665 +- 0.3399
+- Best fold by F1: fold 5 (F1=0.9221, acc=0.8962)
+- Worst fold by F1: fold 3 (F1=0.7108, acc=0.6991)
+- Threshold mean+-std: 0.2092 +- 0.2892

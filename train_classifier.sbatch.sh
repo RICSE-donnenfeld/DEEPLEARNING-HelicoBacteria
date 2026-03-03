@@ -2,7 +2,7 @@
 #SBATCH -J helico_cnn
 #SBATCH -n 4
 #SBATCH -N 1
-#SBATCH -D /hhome/ricse04/autoencoder
+#SBATCH -D /hhome/ricse04/deeplearning
 #SBATCH -t 0-02:00
 #SBATCH -p dcca40
 #SBATCH --mem 16000
@@ -14,7 +14,7 @@ set -euo pipefail
 
 nvidia-smi
 
-cd /hhome/ricse04/autoencoder
+cd /hhome/ricse04/deeplearning
 
 source .venv/bin/activate
 

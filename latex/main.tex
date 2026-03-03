@@ -46,10 +46,10 @@ in Immunohistochemical Histopathological Images}\\[4pt]
 \begin{titlepage}
   \centering
   \vspace*{1cm}
-  {\LARGE\textbf{Deep Learning for the Detection of \textit{Helicobacter pylori}\\
+  {\LARGE\textbf{Deep Learning \\ for the Detection of \textit{Helicobacter pylori}\\
   in Immunohistochemical Histopathological Images}\par}
   \vspace{0.5cm}
-  {\large Project-Based Learning Report\par}
+  {\large Project Report\par}
   \vspace{1.5cm}
   \includegraphics[width=0.7\linewidth]{figures/cover.png}\\[1cm]
   \textit{Representative histology: IHC-stained gastric biopsy patch.}
@@ -96,7 +96,7 @@ We implement two patch-level models---a supervised CNN and an unsupervised autoe
 
 We use the Quiron Salut dataset: IHC-stained gastric biopsy whole-slide images from which $256\times256$ pixel patches have been cropped along the tissue border. Patient-level labels indicate H.\textit{ pylori} density: NEGATIVE, LOW, or HIGH. For binary classification we map NEGATIVE to 0 and (LOW, HIGH) to 1.
 
-Patch-level annotations are provided in \texttt{CoordAnnotatedAllPatches.csv} with a \texttt{Presence} field: $-1$ (healthy), $1$ (bacteria present), or $0$ (unclear, excluded from training).
+Patch-level annotations are provided in \texttt{CoordAnnotatedAllPatches.csv} with a \texttt{Presence} field: $-1$ (healthy), $1$ (bacteria present), or $0$ (unclear, which we excluded from training as there are 3 or 4 cases only).
 
 The data are organised into three parts: \textbf{CrossValidation/Annotated} (expert-labelled patches for training and validating patch-level models), \textbf{CrossValidation/Cropped} (all patches per patient for aggregation experiments), and \textbf{HoldOut} (116 independent patients reserved for final evaluation only). Table~\ref{tab:dataset_stats} summarises the sample counts.
 
@@ -124,10 +124,12 @@ First, a patch-level model (CNN or autoencoder) is trained on annotated or healt
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=\linewidth]{figures/methodology.png}
+\includegraphics[width=0.8\linewidth]{figures/methodology.png}
 \caption{Methodology workflow: data preparation, patch-level classification (CNN vs autoencoder), and patient-level aggregation (to be evaluated in a later phase).}
 \label{fig:methodology}
 \end{figure}
+
+\newpage
 
 \subsection{Preprocessing}
 Patches are loaded as RGB images, resized to $256\times256$ if needed, and normalised per channel with $x' = (x - \mu)/\sigma$ where $\mu = \sigma = (0.5, 0.5, 0.5)$, so that inputs lie approximately in $[-1, 1]$. For the CNN we apply data augmentation: random flips, small rotations, and optional colour jitter.
@@ -159,15 +161,17 @@ The CNN started as a minimal classifier: three small convolutional blocks (3$\to
 The autoencoder began with a shallower encoder (32$\to$64$\to$128$\to$256$\to$256 channels, 8$\times$8 bottleneck) and ReLU activations. To avoid losing information in the bottleneck (ReLU zeros negatives), ReLU was replaced by LeakyReLU. The encoder and decoder were then deepened and widened (64$\to$128$\to$256$\to$512$\to$512 channels, 8$\times$8$\times$512 bottleneck) to improve reconstruction of healthy tissue so that anomalous patches yield higher error. The anomaly score was extended with a \texttt{max\_local} option (maximum over $8\times8$ spatial cell means) so that focal H.\textit{ pylori} regions drive the score. Checkpoint selection was fixed to keep the best model by validation loss instead of the last epoch, and the default aggregation and epoch count were set to \texttt{max\_local} and 35 (overridable via Slurm).
 
 \subsection{Code structure}
-The codebase is organised as follows: \texttt{model.py} defines and trains the CNN; \texttt{model\_autoencoder.py} defines and trains the autoencoder and implements ROC-based threshold selection; \texttt{compare\_patch\_classifiers.py} loads both checkpoints, runs them on the same validation loader, and saves the confusion-matrix and ROC figures. Training on a GPU cluster is launched via \texttt{train.sbatch.sh} and \texttt{train\_autoencoder.sbatch.sh}. Dataset paths follow the \texttt{HelicoDataSet/} layout (CrossValidation/Annotated, HoldOut). Key code snippets---the comparison loop, CNN architecture, AE reconstruction error and threshold selection, patient-level aggregation pseudocode, and Slurm commands---are gathered in Appendix~\ref{app:code} (Listings~\ref{lst:compare}--\ref{lst:slurm}). Reproducibility is ensured by fixed random seeds, a fixed patient-level split, and logging of hyperparameters and checkpoints.
+The codebase is organised as follows: \texttt{model\_classifier.py} defines and trains the CNN; \texttt{model\_autoencoder.py} defines and trains the autoencoder (including ROC-based threshold selection); \texttt{src/helico/cv\_utils.py} contains shared patient-level split and metric helpers used by both models; \texttt{compare\_patch\_classifiers.py} evaluates both models on the same validation split and saves confusion-matrix and ROC figures.
+
+Training on a GPU cluster is launched via \texttt{train\_classifier.sbatch.sh} and \texttt{train\_autoencoder.sbatch.sh} (legacy \texttt{train.sbatch.sh} is kept as a compatibility script). Dataset paths follow the \texttt{HelicoDataSet/} layout (CrossValidation/Annotated, HoldOut). Diagnostics and CV interpretation scripts (\texttt{analyze\_cv\_metrics.py}, \texttt{analyze\_ae\_fold\_diagnostics.py}) produce plots and robust-statistics summaries under \texttt{cv/plots/}. Reproducibility is ensured by fixed random seeds, patient-level splitting, and per-fold metric/checkpoint logging.
 
 % ==========================================================
 \section{Experimental Design}
 \label{sec:experiments}
 
-We split the Cross-Validation set at the \textbf{patient level}: every patch of a given patient is assigned to either training or validation, never both, to avoid leakage. A single random split is used with 80\% of patients for training and 20\% for validation (\texttt{val\_ratio=0.2}, \texttt{seed=1}), and the same split is used in \texttt{model.py}, \texttt{model\_autoencoder.py}, and \texttt{compare\_patch\_classifiers.py} so that both models are evaluated on identical validation patches. For full reporting we intend to use $k$-fold cross-validation over patients; the results below correspond to this single split. The Hold-out set (116 patients) is reserved for a single final evaluation after all thresholds have been fixed on cross-validation data.
+We split data at the \textbf{patient level} so that a patient never appears in both train and validation folds. The current evaluation uses \textbf{5-fold patient-level cross-validation} (\texttt{--k-folds 5}, \texttt{seed=42}) for both CNN and AE. For each fold, checkpoints and metrics are stored under \texttt{cv/cnn/fold\_i/} and \texttt{cv/autoencoder/fold\_i/}. The Hold-out set (116 patients) remains reserved for a single final evaluation after all model and threshold design choices are fixed.
 
-We report confusion matrices and, at patch and patient level, accuracy, precision, recall, specificity, and F1. When multiple folds are available we will add confidence intervals and paired statistical tests (e.g.\ Wilcoxon) between the two methods. Hyperparameters are summarised in Table~\ref{tab:hparams}.
+We report fold-wise and aggregate patch-level metrics (accuracy, precision, recall, specificity, F1), using both mean$\pm$std and robust summaries (median/IQR). For AE we additionally report threshold behavior, TPR and FPR by fold.
 
 \subsection{Hyperparameters}
 \begin{table}[H]
@@ -183,12 +187,12 @@ Epochs (CNN) & 150 \\
 Epochs (AE) & 150 \\
 Weight decay & 0 (not used) \\
 Early stopping & not used \\
-Train/val split & patient-level, \texttt{val\_ratio=0.2}, \texttt{seed=1} \\
+CV protocol & patient-level 5-fold, \texttt{seed=42} \\
 Patch threshold $\tau_{patch}$ & ROC: $\arg\min_\tau \bigl(\mathrm{FPR}(\tau)^2 + (1 - \mathrm{TPR}(\tau))^2\bigr)$ (\texttt{roc\_threshold\_optimal}) \\
 Patient threshold $\tau_{patient}$ & from CV; hold-out evaluation TBD \\
 \bottomrule
 \end{tabular}
-\caption{Hyperparameters and training configuration (from \texttt{model.py}, \texttt{model\_autoencoder.py}, and Slurm scripts).}
+\caption{Hyperparameters and training configuration (from \texttt{model\_classifier.py}, \texttt{model\_autoencoder.py}, and Slurm scripts).}
 \label{tab:hparams}
 \end{table}
 
@@ -196,26 +200,42 @@ Patient threshold $\tau_{patient}$ & from CV; hold-out evaluation TBD \\
 \section{Results}
 \label{sec:results}
 
-Both models were evaluated on the same validation fold: 115 training patients (1889 patches) and 28 validation patients (730 patches, of which 419 are healthy and 311 contain H.\textit{ pylori}). We used the checkpoints \texttt{models/classifier/best\_model.pth} (CNN) and \texttt{models/autoencoder/autoencoder\_model.pth} (AE). Patch-level metrics are given in Table~\ref{tab:patch_results}; Figure~\ref{fig:compare_confusion} shows the confusion matrices and Figure~\ref{fig:roc} the ROC curves. Patient-level results (Table~\ref{tab:patient_results}) will be filled after aggregation and hold-out evaluation.
+Both models were evaluated with patient-level 5-fold CV. Aggregate results are reported in Table~\ref{tab:patch_results}. Figure~\ref{fig:cv_compare} shows mean$\pm$std comparison across folds. For AE, fold-level diagnostics revealed one anomalous fold (fold 3) with an error-scale shift and much higher optimal threshold; this is detailed in Figure~\ref{fig:ae_fold3}.
 
 \subsection{Patch-level metrics}
 Table~\ref{tab:patch_results} summarises patch-level performance. Recall is TP/(TP+FN) and specificity is TN/(TN+FP). The CNN attains higher accuracy and precision; the autoencoder is slightly lower but still strong, and was trained without any positive patch labels.
 \begin{table}[H]
 \centering
-\begin{tabular}{lcccc}
+\begin{tabular}{lccccc}
 \toprule
-Method & Accuracy & Precision & Recall & Specificity \\
+Method & Accuracy & Precision & Recall & Specificity & F1 \\
 \midrule
-CNN & 0.989 & 0.978 & 0.997 & 0.983 \\
-Autoencoder & 0.959 & 0.940 & 0.965 & 0.955 \\
+CNN ($\mu\pm\sigma$) & 0.9108$\pm$0.0484 & 0.9706$\pm$0.0197 & 0.8783$\pm$0.0717 & 0.9532$\pm$0.0499 & 0.9201$\pm$0.0382 \\
+Autoencoder ($\mu\pm\sigma$) & 0.8246$\pm$0.0736 & 0.8836$\pm$0.0619 & 0.8065$\pm$0.1009 & 0.8563$\pm$0.0380 & 0.8397$\pm$0.0696 \\
 \bottomrule
 \end{tabular}
-\caption{Patch-level performance on the validation fold (730 patches).}
+\caption{Patch-level cross-validation performance (5-fold patient-level CV).}
 \label{tab:patch_results}
 \end{table}
 
-\subsection{Confusion matrices and ROC}
-Figure~\ref{fig:compare_confusion} shows the confusion matrices for the same 730 validation patches. For the CNN (left), with threshold 0.5 on the positive-class probability, we obtain TN=412, FP=7, FN=1, TP=310. For the autoencoder (right), with $\tau_{patch}$ chosen on the validation ROC (closest to (FPR=0, TPR=1)), we obtain TN=400, FP=19, FN=11, TP=300. Figure~\ref{fig:roc} displays the ROC curves for both methods.
+\subsection{Cross-validation variability and AE fold anomaly}
+Figure~\ref{fig:cv_compare} compares fold-aggregated performance between models. CNN remains stronger and more stable across folds. AE is competitive but more sensitive to fold composition and reconstruction-error scale shifts.
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\linewidth]{../cv/plots/models_mean_std_comparison.png}
+\caption{Model comparison across patient-level CV folds (mean$\pm$std).}
+\label{fig:cv_compare}
+\end{figure}
+
+AE fold diagnostics (Figure~\ref{fig:ae_fold3}) show fold 3 has a distinct error scale. The fold-3 local threshold is 0.7871 while other folds are around 0.04--0.07. Class-wise reconstruction-error medians in fold 3 are also much larger (healthy median $\approx$0.60, unhealthy median $\approx$1.05), indicating a distribution shift rather than a simple class-imbalance artifact.
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\linewidth]{../cv/plots/fold3_error_distributions.png}
+\caption{Fold-3 AE reconstruction-error distributions (healthy vs unhealthy) and selected threshold.}
+\label{fig:ae_fold3}
+\end{figure}
+
+Robust summaries confirm that mean/std is distorted by outliers. For AE threshold, mean$\pm$std is 0.2092$\pm$0.2892 but the robust estimate is median 0.0717 with IQR 0.0027, showing that one outlier fold dominates the standard deviation.
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.9\linewidth]{figures/compare_confusion.png}
@@ -249,14 +269,18 @@ AE + aggregation & -- & -- & -- & -- \\
 \section{Discussion}
 \label{sec:discussion}
 
-On the validation fold, the CNN achieves higher accuracy (0.989) and precision (0.978) than the autoencoder (0.959 and 0.940), with fewer false positives (7 vs.\ 19) and false negatives (1 vs.\ 11). The supervised model thus benefits from seeing both healthy and positive examples during training. The autoencoder, trained only on healthy patches, remains competitive and avoids the need for positive patch labels, which is attractive when annotations are scarce or imbalanced. Both models achieve high recall (0.997 and 0.965), which is desirable in a screening context where missing a positive case is costly.
+With patient-level 5-fold CV, the CNN consistently outperforms the AE in accuracy/precision/F1 and exhibits lower fold-to-fold variance. The AE remains useful in low-label settings but is notably more sensitive to fold-specific data distribution.
 
-The main limitations of the current evaluation are the use of a single train/validation split (so that confidence intervals and statistical tests are not yet available), the limited number of annotated patches, and possible variability in staining and scanning across slides. The threshold-based aggregation from patches to patients could be refined using multiple-instance learning (e.g.\ attention-based pooling). Planned next steps include $k$-fold cross-validation with CIs and paired tests, patient-level aggregation and threshold selection, hold-out evaluation, and optionally stain normalisation and MIL for patient-level diagnosis.
+The main observed limitation is threshold instability under distribution shift: fold 3 presents an upward shift of reconstruction errors for both classes, which inflates local threshold and degrades recall/F1. A pooled global threshold improved some folds but harmed specificity severely on fold 3, so a single global threshold is not yet robust enough. Next steps are threshold normalization/calibration strategies (e.g., robust scaling), patient-level aggregation, and final Hold-out evaluation.
 
 % ==========================================================
 \section{Conclusion}
 \label{sec:conclusion}
-We implemented two patch-level models for H.\textit{ pylori} detection in IHC gastric biopsy images: a supervised CNN and an unsupervised autoencoder for anomaly detection. Both were trained on the Quiron Salut dataset and evaluated on the same validation set (730 patches from 28 patients). The CNN reaches 0.989 accuracy and 0.978 precision; the autoencoder reaches 0.959 and 0.940 without using positive patch labels at training time. We reported the methodology, implementation details, patch-level metrics, confusion matrices, and ROC curves. The next steps are $k$-fold cross-validation with statistical comparison, patient-level aggregation, and evaluation on the independent hold-out set.
+We implemented two patch-level models for H.\textit{ pylori} detection: a supervised CNN and an unsupervised autoencoder for anomaly detection, and evaluated both with patient-level 5-fold CV.
+
+The CNN achieves stronger and more stable performance (F1 0.9201$\pm$0.0382) than the AE (F1 0.8397$\pm$0.0696). AE diagnostics identify a fold-specific error-scale anomaly (fold 3), motivating robust threshold calibration rather than a single pooled threshold.
+
+The repository now includes reproducible CV diagnostics and report-generation tooling. The next steps are patient-level aggregation and final hold-out evaluation with calibrated thresholds.
 
 
 \newpage
@@ -290,7 +314,7 @@ We implemented two patch-level models for H.\textit{ pylori} detection in IHC ga
     acc_ae, prec_ae, cm_ae = _metrics(labels, ae_pred)
 \end{lstlisting}
 
-\begin{lstlisting}[language=Python, caption={CNN for patch classification (\texttt{model.py}).},label=lst:cnn]
+\begin{lstlisting}[language=Python, caption={CNN for patch classification (\texttt{model\_classifier.py}).},label=lst:cnn]
 class SimpleCNN(nn.Module):
     def __init__(self, num_classes: int = 2) -> None:
         super().__init__()
@@ -378,7 +402,7 @@ for patient in patients:
 \end{lstlisting}
 
 \begin{lstlisting}[language=bash, caption={Slurm training and comparison commands.},label=lst:slurm]
-sbatch train.sbatch.sh
+sbatch train_classifier.sbatch.sh
 sbatch train_autoencoder.sbatch.sh
 python compare_patch_classifiers.py
 \end{lstlisting}
