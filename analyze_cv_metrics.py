@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib
+import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -180,6 +181,53 @@ def _plot_model_comparison(out_dir: Path, data: dict[str, list[dict[str, Any]]])
     plt.close(fig)
 
 
+def _plot_patch_metrics_boxplot(out_dir: Path, data: dict[str, list[dict[str, Any]]]) -> None:
+    """Box plot of patch-level metrics across 5 folds: CNN vs AE (median/IQR, robust view)."""
+    cnn_rows = data.get("cnn", [])
+    ae_rows = data.get("autoencoder", [])
+    if not cnn_rows or not ae_rows:
+        return
+    metrics = ["accuracy", "precision", "recall", "specificity", "f1"]
+    cnn_vals = {m: _series(cnn_rows, m) for m in metrics}
+    ae_vals = {m: _series(ae_rows, m) for m in metrics}
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    x = np.arange(len(metrics))
+    width = 0.35
+    cnn_boxes = [cnn_vals[m] for m in metrics]
+    ae_boxes = [ae_vals[m] for m in metrics]
+    bp_cnn = ax.boxplot(
+        cnn_boxes,
+        positions=x - width / 2,
+        widths=width * 0.8,
+        patch_artist=True,
+        showfliers=True,
+    )
+    bp_ae = ax.boxplot(
+        ae_boxes,
+        positions=x + width / 2,
+        widths=width * 0.8,
+        patch_artist=True,
+        showfliers=True,
+    )
+    for patch in bp_cnn["boxes"]:
+        patch.set_facecolor("tab:blue")
+        patch.set_alpha(0.6)
+    for patch in bp_ae["boxes"]:
+        patch.set_facecolor("tab:orange")
+        patch.set_alpha(0.6)
+    ax.set_xticks(x)
+    ax.set_xticklabels(metrics)
+    ax.set_ylabel("Score")
+    ax.set_ylim(0.0, 1.02)
+    ax.set_title("Patch-level CV metrics: CNN vs AE (5 folds, box = IQR)")
+    ax.legend([bp_cnn["boxes"][0], bp_ae["boxes"][0]], ["CNN", "Autoencoder"], loc="lower right")
+    ax.grid(axis="y", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(out_dir / "patch_metrics_boxplot_cnn_vs_ae.png", dpi=160, bbox_inches="tight")
+    plt.close(fig)
+
+
 def _plot_autoencoder_thresholds(out_dir: Path, data: dict[str, list[dict[str, Any]]]) -> None:
     rows = data.get("autoencoder", [])
     if not rows:
@@ -237,6 +285,7 @@ def main() -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     _plot_fold_lines(args.out_dir, data)
     _plot_model_comparison(args.out_dir, data)
+    _plot_patch_metrics_boxplot(args.out_dir, data)
     _plot_autoencoder_thresholds(args.out_dir, data)
     _write_interpretation(args.out_dir / "interpretation.txt", data)
 

@@ -11,9 +11,9 @@ dependencies = [
   "torch",
   "torchvision",
   "Pillow",
-  "scipy",
+  "numpy",
   "matplotlib",
-  "scikit-learn"
+  "scikit-learn",
 ]
 
 

@@ -84,6 +84,14 @@ python scripts/analyze_ae_fold_diagnostics.py
 
 Outputs are written to `cv/plots/`.
 
+To build patch-level confusion matrices and ROC from the 5-fold CV (pooled validation sets), run (after 5-fold training for both models):
+
+```bash
+python compare_patch_classifiers_cv_folds.py
+```
+
+This writes `cv/plots/compare_confusion_cv_folds.png` and `cv/plots/compare_roc_cv_folds.png`, which the report can show side by side with the single-run figures.
+
 ### Patient-level pipeline
 
 Run patient-level aggregation and evaluation (CrossValidation patient-CV + HoldOut):
@@ -198,6 +206,10 @@ Local (from repo root):
 cd latex
 latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex
 ```
+
+To include all figures in the report:
+- **Patch-level:** Run `python analyze_cv_metrics.py` (produces `cv/plots/`, including `patch_metrics_boxplot_cnn_vs_ae.png`).
+- **Patient-level:** Run the patient-level pipeline with `--use-cv-fold-checkpoints` for CNN and AE, then `python analyze_patient_level_metrics.py` (produces `output/patient_level/plots/`). If these plots are missing, the report still builds and shows a short note instead.
 
 GitHub Actions:
 

@@ -74,9 +74,39 @@ in Immunohistochemical Histopathological Images}\\[4pt]
 We use the Quiron Salut dataset of 245 gastric biopsies (immunohistochemically stained whole-slide images) to implement and compare two patch-level models for \textit{Helicobacter pylori} detection.
 A patch-based pipeline processes $256\times256$ patches extracted along tissue borders.
 Two approaches are implemented: (i) a supervised convolutional neural network (CNN) trained on expert-annotated patches, and (ii) an unsupervised autoencoder (AE) trained on healthy patches and used for anomaly detection via reconstruction error.
-This report shows that both models are running and have been compared on the same validation set: we evaluate them with the comparison script (\texttt{compare\_patch\_classifiers.py}), report patch-level accuracy and precision, and include a side-by-side confusion-matrix plot.
-\textbf{Scope of this first report is patch-level comparison; patient-level aggregation and evaluation on the independent hold-out set are planned as next steps.}
+Both models are evaluated at patch level with 5-fold patient-level cross-validation and at patient level by aggregating patch predictions into a contamination ratio and applying a learned threshold; we report results on the cross-validation splits and on the independent Hold-out set (116 patients).
+The CNN achieves stronger and more stable performance (patch-level F1 0.92, patient-level CV F1 0.95, Hold-out F1 0.81); the AE is competitive at patch level but shows higher variability and lower specificity at patient level, with one fold exhibiting a pronounced reconstruction-error scale shift.
 \end{abstract}
+
+\tableofcontents
+\newpage
+
+% ==========================================================
+\section*{Glossary}
+\addcontentsline{toc}{section}{Glossary}
+\label{sec:glossary}
+
+\begin{description}
+  \item[AE] Autoencoder. Unsupervised model trained on healthy patches; anomaly score is reconstruction error.
+  \item[CNN] Convolutional neural network. Supervised patch-level classifier (healthy vs.\ bacteria).
+  \item[Contamination ratio] For a patient, the fraction of patches predicted positive; $r_p = \frac{1}{N_p}\sum_{i=1}^{N_p} \hat{z}_i$.
+  \item[CV] Cross-validation. Here: 5-fold patient-level CV (splits by patient, not by patch).
+  \item[F1] F1 score. Harmonic mean of precision and recall: $2 \cdot \mathrm{precision} \cdot \mathrm{recall} / (\mathrm{precision} + \mathrm{recall})$.
+  \item[FPR] False positive rate. Proportion of true negatives incorrectly predicted positive; $\mathrm{FP}/(\mathrm{TN}+\mathrm{FP})$.
+  \item[Hold-out] Independent test set (116 patients), not used for training or threshold selection; evaluated only with trained models.
+  \item[IHC] Immunohistochemistry. Staining used on the gastric biopsy slides.
+  \item[Patch] A $256\times256$ pixel crop from a whole-slide image (here, along the tissue border).
+  \item[Patch-level] Evaluation or model applied to individual patches (as opposed to a full patient).
+  \item[Patient-level] Evaluation or prediction after aggregating patch outputs per patient (e.g.\ via contamination ratio and $\tau_{patient}$).
+  \item[Precision] Among predicted positives, the fraction that are truly positive; $\mathrm{TP}/(\mathrm{TP}+\mathrm{FP})$.
+  \item[Recall] Among true positives, the fraction correctly predicted positive; $\mathrm{TP}/(\mathrm{TP}+\mathrm{FN})$. Syn.\ sensitivity.
+  \item[ROC] Receiver operating characteristic. Curve of true positive rate vs.\ false positive rate as the decision threshold varies.
+  \item[Specificity] Among true negatives, the fraction correctly predicted negative; $\mathrm{TN}/(\mathrm{TN}+\mathrm{FP})$.
+  \item[TPR] True positive rate. Same as recall; $\mathrm{TP}/(\mathrm{TP}+\mathrm{FN})$.
+  \item[$\tau_{patient}$] Patient-level threshold. A patient is predicted positive if their contamination ratio $r_p > \tau_{patient}$; chosen per fold on training patients (best F1).
+  \item[$\tau_{patch}$] Patch-level threshold. A patch is predicted positive if its score (CNN probability or AE reconstruction error) exceeds $\tau_{patch}$; for the AE, chosen per fold on the validation set (ROC).
+  \item[WSI] Whole-slide image. High-resolution digitised histology slide.
+\end{description}
 
 \newpage
 
@@ -86,9 +116,9 @@ This report shows that both models are running and have been compared on the sam
 
 \textit{Helicobacter pylori} is a gastric bacterium associated with chronic gastritis and an increased risk of gastric cancer. In clinical practice, detection often relies on the visual inspection of immunohistochemically (IHC) stained histopathology slides. Whole-slide images (WSI) can exceed 100\,000 pixels per side, making manual review time-consuming. This project investigates automated, patch-based detection: we classify small image patches as healthy or containing bacteria, then aggregate patch predictions to obtain a patient-level diagnosis.
 
-The pipeline has three stages: (1) train a patch-level classifier on expert-annotated data; (2) apply it to all patches of each patient and compute the fraction of positive patches; (3) compare that fraction to a threshold to yield a binary patient diagnosis. Key challenges are the limited number of annotated patches, strong class imbalance (few patches contain bacteria), and the need to avoid data leakage by splitting at the patient level rather than the patch level.
+The pipeline has three stages: (1) train a patch-level classifier on expert-annotated data; (2) apply it to all patches of each patient and compute the fraction of positive patches (contamination ratio); (3) compare that ratio to a threshold $\tau_{patient}$ to yield a binary patient-level diagnosis. Key challenges are the limited number of annotated patches, strong class imbalance (few patches contain bacteria), and the need to avoid data leakage by splitting at the patient level rather than the patch level.
 
-We implement two patch-level models---a supervised CNN and an unsupervised autoencoder used for anomaly detection---and compare them on the same validation set. This report describes the methodology, experimental setup, and patch-level results; patient-level aggregation and evaluation on an independent hold-out set are left for future work.
+We implement two patch-level models---a supervised CNN and an unsupervised autoencoder used for anomaly detection---and evaluate the full pipeline: 5-fold patient-level cross-validation for patch-level training, then patient-level aggregation with fold-consistent models and thresholds, evaluated on both the CV validation folds and the independent Hold-out set (116 patients). This report presents the methodology, implementation, experimental design, and results for the complete pipeline.
 
 % ==========================================================
 \section{Dataset Description}
@@ -98,7 +128,7 @@ We use the Quiron Salut dataset: IHC-stained gastric biopsy whole-slide images f
 
 Patch-level annotations are provided in \texttt{CoordAnnotatedAllPatches.csv} with a \texttt{Presence} field: $-1$ (healthy), $1$ (bacteria present), or $0$ (unclear, which we excluded from training as there are 3 or 4 cases only).
 
-The data are organised into three parts: \textbf{CrossValidation/Annotated} (expert-labelled patches for training and validating patch-level models), \textbf{CrossValidation/Cropped} (all patches per patient for aggregation experiments), and \textbf{HoldOut} (116 independent patients reserved for final evaluation only). Table~\ref{tab:dataset_stats} summarises the sample counts.
+The data are organised into three parts: \textbf{CrossValidation/Annotated} (expert-labelled patches for training and validating patch-level models), \textbf{CrossValidation/Cropped} (all patches per patient for aggregation experiments), and \textbf{Hold-out} (116 independent patients reserved for final evaluation only). Table~\ref{tab:dataset_stats} summarises the sample counts.
 
 \begin{table}[H]
 \centering
@@ -107,7 +137,7 @@ The data are organised into three parts: \textbf{CrossValidation/Annotated} (exp
 Split & \#Patients & \#Annotated patches & \#Positive patches & \#Negative patches \\
 \midrule
 CrossValidation & 123 & 1211 & 161 & 1050 \\
-HoldOut & 116 & -- & -- & -- \\
+Hold-out & 116 & -- & -- & -- \\
 \bottomrule
 \end{tabular}
 \caption{Dataset size overview (Quiron Salut).}
@@ -120,12 +150,12 @@ HoldOut & 116 & -- & -- & -- \\
 
 \subsection{Pipeline overview}
 The pipeline has three steps.
-First, a patch-level model (CNN or autoencoder) is trained on annotated or healthy-only patches. Second, the model is applied to every patch of each patient. Third, the fraction of patches predicted positive per patient is computed and compared to a threshold $\tau_{patient}$ to obtain a binary patient-level diagnosis. Within this first report we address patch-level classification by comparing an autoencoder and a CNN classifier. Figure~\ref{fig:methodology} summarises the workflow.
+First, a patch-level model (CNN or autoencoder) is trained on annotated or healthy-only patches, with 5-fold patient-level cross-validation so that each fold yields a trained model and (for the AE) a patch-level threshold. Second, each fold model is applied to every patch of each patient (CV and Hold-out); the fraction of patches predicted positive per patient defines the contamination ratio $r_p$. Third, a patient-level threshold $\tau_{patient}$ is chosen per fold on the fold's training patients (maximising F1), then applied to validation and Hold-out patients to obtain binary patient-level predictions. We compare the CNN and the autoencoder at both patch level and patient level, reporting metrics on the CV folds and on the independent Hold-out set. Figure~\ref{fig:methodology} summarises the workflow.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.8\linewidth]{figures/methodology.png}
-\caption{Methodology workflow: data preparation, patch-level classification (CNN vs autoencoder), and patient-level aggregation (to be evaluated in a later phase).}
+\caption{Methodology workflow: data preparation, patch-level classification (CNN vs autoencoder), and patient-level aggregation evaluated on CV and Hold-out.}
 \label{fig:methodology}
 \end{figure}
 
@@ -158,7 +188,7 @@ The patient is predicted positive if $r_p > \tau_{patient}$. In our implementati
   \item CNN: score = $P(\mathrm{unhealthy})$, threshold $\tau_{patch}^{cnn}=0.5$ (default).
   \item AE: score = reconstruction error (\texttt{mean} or \texttt{max\_local}), threshold $\tau_{patch}^{ae}$ from ROC (\texttt{autoencoder\_threshold.txt} or fold-specific threshold files).
 \end{itemize}
-The patient threshold $\tau_{patient}$ is selected on training patients by maximizing patient-level F1 over candidate ratio thresholds, then evaluated on validation patients. The same protocol is applied fold-by-fold in patient-level CV, and then on Hold-out.
+The patient threshold $\tau_{patient}$ is selected on training patients by maximising patient-level F1 over candidate ratio thresholds, then evaluated on validation patients. The same protocol is applied fold-by-fold in patient-level CV, and then on Hold-out.
 
 % ==========================================================
 \section{Implementation Details}
@@ -182,9 +212,9 @@ Training on a GPU cluster is launched via \texttt{train\_classifier.sbatch.sh} a
 
 We split data at the \textbf{patient level} so that a patient never appears in both train and validation folds. The current evaluation uses \textbf{5-fold patient-level cross-validation} (\texttt{--k-folds 5}, \texttt{seed=42}) for both CNN and AE. For each fold, checkpoints and metrics are stored under \texttt{cv/cnn/fold\_i/} and \texttt{cv/autoencoder/fold\_i/}. The Hold-out set (116 patients) remains reserved for a single final evaluation after all model and threshold design choices are fixed.
 
-For patient-level diagnosis, we compute contamination ratios on \texttt{CrossValidation/Cropped} and select fold-wise $\tau_{patient}$ from training patients only (best F1). We then evaluate on validation patients and additionally report Hold-out metrics per fold using the same fold model and $\tau_{patient}$. This avoids mixing fold artifacts and keeps patch-level and patient-level protocols consistent.
+For patient-level diagnosis, we compute contamination ratios on \texttt{CrossValidation/Cropped} and select fold-wise $\tau_{patient}$ from training patients only (best F1). We then evaluate on validation patients and additionally report Hold-out metrics per fold using the same fold model and $\tau_{patient}$. This avoids mixing fold artefacts and keeps patch-level and patient-level protocols consistent.
 
-We report fold-wise and aggregate patch-level metrics (accuracy, precision, recall, specificity, F1), using both mean$\pm$std and robust summaries (median/IQR). For AE we additionally report threshold behavior, TPR and FPR by fold.
+We report fold-wise and aggregate patch-level metrics (accuracy, precision, recall, specificity, F1), using both mean$\pm$std and robust summaries (median/IQR). For AE we additionally report threshold behaviour, TPR and FPR by fold.
 
 \subsection{Hyperparameters}
 \begin{table}[H]
@@ -202,7 +232,7 @@ Weight decay & 0 (not used) \\
 Early stopping & not used \\
 CV protocol & patient-level 5-fold, \texttt{seed=42} \\
 Patch threshold $\tau_{patch}$ & ROC: $\arg\min_\tau \bigl(\mathrm{FPR}(\tau)^2 + (1 - \mathrm{TPR}(\tau))^2\bigr)$ (\texttt{roc\_threshold\_optimal}) \\
-Patient threshold $\tau_{patient}$ & from CV; hold-out evaluation TBD \\
+Patient threshold $\tau_{patient}$ & per fold from CV train (best F1); applied to CV val and Hold-out \\
 \bottomrule
 \end{tabular}
 \caption{Hyperparameters and training configuration (from \texttt{model\_classifier.py}, \texttt{model\_autoencoder.py}, and Slurm scripts).}
@@ -240,6 +270,16 @@ Figure~\ref{fig:cv_compare} compares fold-aggregated performance between models.
 \label{fig:cv_compare}
 \end{figure}
 
+\IfFileExists{../cv/plots/patch_metrics_boxplot_cnn_vs_ae.png}{%
+Figure~\ref{fig:patch_boxplot} shows the same patch-level metrics as box plots (median and IQR across the 5 folds), giving a robust view less influenced by outliers than mean$\pm$std.
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\linewidth]{../cv/plots/patch_metrics_boxplot_cnn_vs_ae.png}
+\caption{Patch-level metrics by fold: CNN vs AE (box = IQR, 5 folds).}
+\label{fig:patch_boxplot}
+\end{figure}
+}{}
+
 AE fold diagnostics (Figure~\ref{fig:ae_fold3}) show fold 3 has a distinct error scale compared with folds 1, 2, 4, and 5. The fold-3 local threshold is 0.7871 while other folds are around 0.04--0.07. Class-wise reconstruction-error medians in fold 3 are also much larger (healthy median $\approx$0.60, unhealthy median $\approx$1.05), indicating a distribution shift rather than a simple class-imbalance artifact. A full five-fold visual comparison is provided in Appendix Figure~\ref{fig:ae_fold_all_appendix}.
 \begin{figure}[H]
 \centering
@@ -248,17 +288,56 @@ AE fold diagnostics (Figure~\ref{fig:ae_fold3}) show fold 3 has a distinct error
 \label{fig:ae_fold3}
 \end{figure}
 
-Robust summaries confirm that mean/std is distorted by outliers. For AE threshold, mean$\pm$std is 0.2092$\pm$0.2892 but the robust estimate is median 0.0717 with IQR 0.0027, showing that one outlier fold dominates the standard deviation.
+Robust summaries confirm that mean/std is distorted by outliers. For AE threshold, mean$\pm$std is 0.2092$\pm$0.2892 but the robust estimate is median 0.0717 with IQR 0.0027, showing that one outlier fold dominates the standard deviation. Table~\ref{tab:ae_thresholds} gives the patch-level threshold $\tau_{patch}$, TPR and FPR per fold; fold~3 is the clear outlier.
+\begin{table}[H]
+\centering
+\begin{tabular}{lccc}
+\toprule
+Fold & $\tau_{patch}$ (AE) & TPR & FPR \\
+\midrule
+1 & 0.0436 & 0.818 & 0.154 \\
+2 & 0.0717 & 0.911 & 0.103 \\
+3 & 0.7871 & 0.635 & 0.192 \\
+4 & 0.0705 & 0.796 & 0.173 \\
+5 & 0.0732 & 0.897 & 0.096 \\
+\bottomrule
+\end{tabular}
+\caption{Autoencoder patch-level threshold and operating point per CV fold (from \texttt{cv/autoencoder/fold\_*/metrics.json}). Fold~3 exhibits a much higher $\tau_{patch}$ due to error-scale shift.}
+\label{tab:ae_thresholds}
+\end{table}
+
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.9\linewidth]{figures/compare_confusion.png}
-\caption{Confusion matrices on the validation set. Left: CNN. Right: Autoencoder (threshold from validation ROC).}
+\IfFileExists{../cv/plots/compare_confusion_cv_folds.png}{%
+\begin{minipage}[t]{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{figures/compare_confusion.png}
+  \subcaption{Single run (one train/val split).}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../cv/plots/compare_confusion_cv_folds.png}
+  \subcaption{5-fold CV (validation sets pooled).}
+\end{minipage}
+}{\includegraphics[width=0.9\linewidth]{figures/compare_confusion.png}}
+\caption{Patch-level confusion matrices (single run: one train/val split; when available, right panel shows 5-fold CV pooled). Left panel: CNN. Right: Autoencoder (threshold from validation ROC or mean of fold thresholds).}
 \label{fig:compare_confusion}
 \end{figure}
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.75\linewidth]{figures/compare_roc.png}
-\caption{ROC curves on the validation set.}
+\IfFileExists{../cv/plots/compare_roc_cv_folds.png}{%
+\begin{minipage}[t]{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{figures/compare_roc.png}
+  \subcaption{Single run (one train/val split).}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../cv/plots/compare_roc_cv_folds.png}
+  \subcaption{5-fold CV (scores pooled across folds).}
+\end{minipage}
+}{\includegraphics[width=0.75\linewidth]{figures/compare_roc.png}}
+\caption{ROC curves (single run; when available, right panel shows 5-fold CV pooled scores).}
 \label{fig:roc}
 \end{figure}
 
@@ -272,8 +351,8 @@ Split & Method & Accuracy & Precision & Recall & Specificity & F1 \\
 \midrule
 CV (mean$\pm$std) & CNN + aggregation & 0.9423$\pm$0.0170 & 0.9241$\pm$0.0519 & 0.9749$\pm$0.0308 & 0.9075$\pm$0.0510 & 0.9472$\pm$0.0190 \\
 CV (mean$\pm$std) & AE + aggregation & 0.7744$\pm$0.0556 & 0.7518$\pm$0.0308 & 0.8960$\pm$0.0446 & 0.5995$\pm$0.1748 & 0.8165$\pm$0.0224 \\
-HoldOut-per-fold (mean$\pm$std) & CNN + aggregation & 0.8172$\pm$0.0065 & 0.8439$\pm$0.0173 & 0.7793$\pm$0.0129 & 0.8552$\pm$0.0207 & 0.8101$\pm$0.0053 \\
-HoldOut-per-fold (mean$\pm$std) & AE + aggregation & 0.6966$\pm$0.0675 & 0.6860$\pm$0.0750 & 0.7586$\pm$0.0218 & 0.6345$\pm$0.1516 & 0.7172$\pm$0.0383 \\
+Hold-out (per fold, mean$\pm$std) & CNN + aggregation & 0.8172$\pm$0.0065 & 0.8439$\pm$0.0173 & 0.7793$\pm$0.0129 & 0.8552$\pm$0.0207 & 0.8101$\pm$0.0053 \\
+Hold-out (per fold, mean$\pm$std) & AE + aggregation & 0.6966$\pm$0.0675 & 0.6860$\pm$0.0750 & 0.7586$\pm$0.0218 & 0.6345$\pm$0.1516 & 0.7172$\pm$0.0383 \\
 \bottomrule
 \end{tabular}
 \caption{Patient-level performance from fold-consistent aggregation (\texttt{patient\_summary.json} for CNN and AE).}
@@ -282,22 +361,135 @@ HoldOut-per-fold (mean$\pm$std) & AE + aggregation & 0.6966$\pm$0.0675 & 0.6860$
 
 CNN is stronger and more stable at patient level, while AE keeps high sensitivity but lower specificity. This is consistent with patch-level observations and AE fold-threshold variability.
 
+\subsection{Patient-level visualisations}
+The following figures are produced by \texttt{analyze\_patient\_level\_metrics.py} (run after the patient-level pipeline with \texttt{--use-cv-fold-checkpoints}). They compare CNN and AE at patient level and show threshold behaviour and score distributions.
+
+\IfFileExists{../output/patient_level/plots/patient_models_cv_mean_std_comparison.png}{%
+First, a direct comparison: the bar chart below summarises how the two models perform on the cross-validation folds when we aggregate patches to a patient-level decision. CNN clearly leads on accuracy, precision and F1.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.88\linewidth]{../output/patient_level/plots/patient_models_cv_mean_std_comparison.png}
+\caption{Patient-level CV metrics: CNN vs AE (mean$\pm$std across folds).}
+\label{fig:patient_cv_compare}
+\end{figure}
+
+To see how stable each model is across folds and how performance changes from CV to the unseen Hold-out set, we plot each metric by fold. Circles are the CV validation performance; squares are Hold-out performance using the same fold model. If the two markers track each other, the model generalises well.
+
+\begin{figure}[H]
+\centering
+\begin{minipage}{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../output/patient_level/plots/patient_cnn_fold_lines.png}
+  \subcaption{CNN}
+\end{minipage}\hfill
+\begin{minipage}{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../output/patient_level/plots/patient_autoencoder_fold_lines.png}
+  \subcaption{Autoencoder}
+\end{minipage}
+\caption{Patient-level metrics per fold: CV (circles) vs Hold-out evaluated with the same fold model (squares).}
+\label{fig:patient_fold_lines}
+\end{figure}
+
+On the independent Hold-out set we can compare the two models in terms of discriminative ability. The ROC curves below show that the CNN again dominates: for a given false-positive rate it achieves a higher true-positive rate.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.72\linewidth]{../output/patient_level/plots/patient_roc_cnn_vs_ae_holdout.png}
+\caption{Patient-level ROC on Hold-out (pooled across folds).}
+\label{fig:patient_roc}
+\end{figure}
+
+The next two panels show where the models go wrong. The confusion matrices (averaged over folds) tell us how many patients are correctly or incorrectly classified as healthy or positive, both on CV and on Hold-out. The CNN keeps a better balance; the AE tends to call more patients positive, which boosts sensitivity but hurts specificity.
+
+\begin{figure}[H]
+\centering
+\begin{minipage}{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../output/patient_level/plots/patient_confusion_cnn_cv_holdout.png}
+  \subcaption{CNN}
+\end{minipage}\hfill
+\begin{minipage}{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../output/patient_level/plots/patient_confusion_ae_cv_holdout.png}
+  \subcaption{Autoencoder}
+\end{minipage}
+\caption{Patient-level mean confusion: CV vs Hold-out per fold.}
+\label{fig:patient_confusion}
+\end{figure}
+
+For each patient the model produces a contamination ratio (the fraction of patches predicted positive). Ideally, true healthy patients have low ratios and true positive patients have high ratios, with a clear gap. The histograms below show how these ratios are distributed on Hold-out; the vertical line is the threshold we use for the final decision. Good separation between the two curves means the threshold has an easy job.
+
+\begin{figure}[H]
+\centering
+\begin{minipage}{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../output/patient_level/plots/patient_ratio_distribution_cnn.png}
+  \subcaption{CNN}
+\end{minipage}\hfill
+\begin{minipage}{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../output/patient_level/plots/patient_ratio_distribution_ae.png}
+  \subcaption{Autoencoder}
+\end{minipage}
+\caption{Contamination-ratio distributions on Hold-out (true healthy vs true positive), with mean $\tau_{patient}$ (vertical line).}
+\label{fig:patient_ratio_dist}
+\end{figure}
+
+The patient-level threshold $\tau_{patient}$ was chosen on the training set to maximise F1. The curves below show how F1, recall and specificity would change if we moved that threshold: we see the usual trade-off between catching more positives (recall) and avoiding false alarms (specificity).
+
+\begin{figure}[H]
+\centering
+\begin{minipage}{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../output/patient_level/plots/patient_tau_sweep_cnn.png}
+  \subcaption{CNN}
+\end{minipage}\hfill
+\begin{minipage}{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../output/patient_level/plots/patient_tau_sweep_ae.png}
+  \subcaption{Autoencoder}
+\end{minipage}
+\caption{F1, recall and specificity vs $\tau_{patient}$ on CV validation folds (mean$\pm$std band).}
+\label{fig:patient_tau_sweep}
+\end{figure}
+
+Lastly, we break down errors by the true clinical burden (NEGATIVE, LOW, HIGH). This tells us whether the model fails mainly on low-burden cases, which are harder to detect, or whether mistakes are spread across groups.
+
+\begin{figure}[H]
+\centering
+\begin{minipage}{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../output/patient_level/plots/patient_error_by_burden_cnn.png}
+  \subcaption{CNN}
+\end{minipage}\hfill
+\begin{minipage}{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../output/patient_level/plots/patient_error_by_burden_ae.png}
+  \subcaption{Autoencoder}
+\end{minipage}
+\caption{Patient-level error analysis on Hold-out: overall error rate and false-negative rate by burden (NEGATIVE, LOW, HIGH).}
+\label{fig:patient_error_burden}
+\end{figure}
+}{\par\noindent\textit{Patient-level figures not found. Run the patient-level pipeline with \texttt{--use-cv-fold-checkpoints} for CNN and AE, then \texttt{analyze\_patient\_level\_metrics.py}, to generate the plots in \texttt{output/patient\_level/plots/}.}}
+
 % ==========================================================
 \section{Discussion}
 \label{sec:discussion}
 
 With patient-level 5-fold CV, the CNN consistently outperforms the AE in accuracy/precision/F1 and exhibits lower fold-to-fold variance. The AE remains useful in low-label settings but is notably more sensitive to fold-specific data distribution.
 
-The main observed limitation is threshold instability under distribution shift: fold 3 presents an upward shift of reconstruction errors for both classes, which inflates local threshold and degrades specificity at patient level. A pooled global threshold improved some folds but harmed specificity severely on fold 3, so a single global threshold is not yet robust enough. The current fold-consistent patient pipeline makes this behavior explicit and reproducible, and provides a solid baseline for future threshold normalization/calibration strategies (e.g., robust scaling or nested calibration).
+The main observed limitation is threshold instability under distribution shift: fold 3 presents an upward shift of reconstruction errors for both classes, which inflates local threshold and degrades specificity at patient level. A pooled global threshold improved some folds but harmed specificity severely on fold 3, so a single global threshold is not yet robust enough. The current fold-consistent patient pipeline makes this behaviour explicit and reproducible, and provides a solid baseline for future threshold normalisation/calibration strategies (e.g., robust scaling or nested calibration).
 
 % ==========================================================
 \section{Conclusion}
 \label{sec:conclusion}
-We implemented two patch-level models for H.\textit{ pylori} detection: a supervised CNN and an unsupervised autoencoder for anomaly detection, and evaluated both with patient-level 5-fold CV plus fold-consistent patient-level aggregation.
+We implemented and evaluated a full pipeline for H.\textit{ pylori} detection in IHC-stained gastric biopsies: two patch-level models (supervised CNN and unsupervised autoencoder for anomaly detection), trained with 5-fold patient-level cross-validation, and a patient-level aggregation stage that computes contamination ratios and applies fold-specific thresholds, evaluated on both the CV validation folds and the independent Hold-out set.
 
-The CNN achieves stronger and more stable performance (F1 0.9201$\pm$0.0382) than the AE (F1 0.8397$\pm$0.0696). AE diagnostics identify a fold-specific error-scale anomaly (fold 3), motivating robust threshold calibration rather than a single pooled threshold.
+At patch level, the CNN achieves stronger and more stable performance (F1 0.9201$\pm$0.0382) than the AE (F1 0.8397$\pm$0.0696). At patient level, the CNN again outperforms (CV F1 0.947, Hold-out F1 0.81), while the AE maintains high sensitivity but lower specificity (CV F1 0.82, Hold-out F1 0.72). AE fold diagnostics identify a fold-specific error-scale anomaly (fold 3), motivating robust threshold calibration rather than a single pooled threshold.
 
-The repository now includes reproducible CV diagnostics, fold-consistent patient-level evaluation, and report-generation tooling. The main remaining improvement track is threshold calibration for AE to reduce false positives while preserving sensitivity.
+The codebase provides reproducible training, fold-consistent patient-level evaluation, diagnostics scripts, and this report. The main direction for future work is threshold calibration for the AE to reduce false positives while preserving sensitivity.
 
 
 \newpage
