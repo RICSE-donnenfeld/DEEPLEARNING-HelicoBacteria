@@ -489,7 +489,11 @@ We implemented and evaluated a full pipeline for H.\textit{ pylori} detection in
 
 At patch level, the CNN achieves stronger and more stable performance (F1 0.9201$\pm$0.0382) than the AE (F1 0.8397$\pm$0.0696). At patient level, the CNN again outperforms (CV F1 0.947, Hold-out F1 0.81), while the AE maintains high sensitivity but lower specificity (CV F1 0.82, Hold-out F1 0.72). AE fold diagnostics identify a fold-specific error-scale anomaly (fold 3), motivating robust threshold calibration rather than a single pooled threshold.
 
-The codebase provides reproducible training, fold-consistent patient-level evaluation, diagnostics scripts, and this report. The main direction for future work is threshold calibration for the AE to reduce false positives while preserving sensitivity.
+\paragraph{Possible continuation.}
+Several directions could extend this work:
+(i)~\textbf{Threshold calibration for the AE}---e.g.\ robust scaling or per-fold normalisation of reconstruction errors so that a single or more stable threshold can be used across folds and specificity improves without losing sensitivity;
+(ii)~\textbf{More annotated data}---the current patch set is limited and imbalanced; additional expert labels would help both the CNN and the AE;
+(iii)~\textbf{Architecture and training}---deeper or pre-trained patch encoders (e.g.\ ResNet, vision transformers), and optional class weighting or focal loss to handle imbalance;
 
 
 \newpage
@@ -503,12 +507,10 @@ The codebase provides reproducible training, fold-consistent patient-level evalu
 
 % ==========================================================
 \appendix
-\section{Code extracts}
-\label{app:code}
 
 \section{Additional AE fold diagnostics}
 \label{app:ae_diagnostics}
-\begin{figure}[p]
+\begin{figure}[H]
 \centering
 \begin{subfigure}{0.32\linewidth}
   \centering
@@ -541,6 +543,9 @@ The codebase provides reproducible training, fold-consistent patient-level evalu
 \caption{AE reconstruction-error distributions (healthy vs unhealthy) and selected threshold across all 5 folds. Fold 3 exhibits the strongest right-shifted error scale and threshold.}
 \label{fig:ae_fold_all_appendix}
 \end{figure}
+
+\section{Code extracts}
+\label{app:code}
 
 \begin{lstlisting}[language=Python, caption={Comparison script: both models on the same validation set (\texttt{compare\_patch\_classifiers.py}).},label=lst:compare]
     # CNN
