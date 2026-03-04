@@ -41,6 +41,7 @@ CV_ROOT_DEFAULT = PROJECT_ROOT / "cv"
 class PatientCase:
     patient_id: str
     label: int
+    density_raw: str
     patch_paths: list[Path]
 
 
@@ -121,6 +122,21 @@ def _read_patient_labels(csv_path: Path) -> dict[str, int]:
     return mapping
 
 
+def _read_patient_densities(csv_path: Path) -> dict[str, str]:
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Patient diagnosis file not found: {csv_path}")
+    mapping: dict[str, str] = {}
+    with csv_path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            patient_id = row["CODI"].strip()
+            density = row["DENSITAT"].strip().upper()
+            mapping[patient_id] = density
+    if not mapping:
+        raise RuntimeError(f"No density labels found in {csv_path}")
+    return mapping
+
+
 def _annotated_patient_folds_from_training_setup(
     n_splits: int,
     seed: int,
@@ -165,6 +181,7 @@ def _ae_threshold_and_agg_from_file(path: Path, fallback_agg: str) -> tuple[floa
 def _collect_patient_cases(
     cropped_root: Path,
     patient_labels: dict[str, int],
+    patient_densities: dict[str, str],
     max_patches_per_patient: int | None = None,
 ) -> list[PatientCase]:
     if not cropped_root.exists():
@@ -192,6 +209,7 @@ def _collect_patient_cases(
             PatientCase(
                 patient_id=patient_id,
                 label=patient_labels[patient_id],
+                density_raw=patient_densities.get(patient_id, "UNKNOWN"),
                 patch_paths=patch_paths,
             )
         )
@@ -307,6 +325,38 @@ def _compute_patient_ratios(
     )
 
 
+def _build_patient_detail_rows(
+    *,
+    fold_i: int,
+    split: str,
+    patient_ids: list[str],
+    labels: np.ndarray,
+    ratios: np.ndarray,
+    tau_patient: float,
+    patch_threshold: float,
+    cases_by_id: dict[str, PatientCase],
+) -> list[dict[str, Any]]:
+    preds = (ratios > tau_patient).astype(np.int64)
+    rows: list[dict[str, Any]] = []
+    for idx, patient_id in enumerate(patient_ids):
+        case = cases_by_id.get(patient_id)
+        density_raw = "UNKNOWN" if case is None else case.density_raw
+        rows.append(
+            {
+                "fold": float(fold_i),
+                "split": split,
+                "patient_id": patient_id,
+                "label": int(labels[idx]),
+                "pred": int(preds[idx]),
+                "ratio": float(ratios[idx]),
+                "tau_patient": float(tau_patient),
+                "patch_threshold": float(patch_threshold),
+                "density_raw": density_raw,
+            }
+        )
+    return rows
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -379,21 +429,25 @@ def main() -> None:
     _log(f"Output directory: {out_dir}")
 
     patient_labels = _read_patient_labels(PATIENT_DIAGNOSIS_CSV)
+    patient_densities = _read_patient_densities(PATIENT_DIAGNOSIS_CSV)
     _log(f"Loaded labels for {len(patient_labels)} patients from {PATIENT_DIAGNOSIS_CSV}")
     cv_cases = _collect_patient_cases(
         CV_CROPPED_ROOT,
         patient_labels=patient_labels,
+        patient_densities=patient_densities,
         max_patches_per_patient=args.max_patches_per_patient,
     )
     holdout_cases = _collect_patient_cases(
         HOLDOUT_ROOT,
         patient_labels=patient_labels,
+        patient_densities=patient_densities,
         max_patches_per_patient=args.max_patches_per_patient,
     )
     _log(f"Collected cases: CV={len(cv_cases)} patients, HoldOut={len(holdout_cases)} patients")
 
     fold_rows: list[dict[str, float]] = []
     holdout_fold_rows: list[dict[str, float]] = []
+    patient_detail_rows: list[dict[str, Any]] = []
 
     if args.use_cv_fold_checkpoints:
         folds = _annotated_patient_folds_from_training_setup(
@@ -462,7 +516,7 @@ def main() -> None:
                 log_every_patients=args.log_every_patients,
                 log_prefix=f"fold{fold_i}/train",
             )
-            val_ratios, val_labels, _, _ = _compute_patient_ratios(
+            val_ratios, val_labels, val_patient_ids, _ = _compute_patient_ratios(
                 val_cases,
                 model_type=args.model,
                 device=device,
@@ -487,7 +541,7 @@ def main() -> None:
             )
 
             # HoldOut eval using the same fold model + fold tau_patient.
-            holdout_ratios, holdout_labels, _, _ = _compute_patient_ratios(
+            holdout_ratios, holdout_labels, holdout_patient_ids, _ = _compute_patient_ratios(
                 holdout_cases,
                 model_type=args.model,
                 device=device,
@@ -508,9 +562,36 @@ def main() -> None:
                 f"Fold {fold_i}: HoldOut patient metrics "
                 f"acc={hm['accuracy']:.4f} f1={hm['f1']:.4f}"
             )
+            val_cases_by_id = {c.patient_id: c for c in val_cases}
+            holdout_cases_by_id = {c.patient_id: c for c in holdout_cases}
+            patient_detail_rows.extend(
+                _build_patient_detail_rows(
+                    fold_i=fold_i,
+                    split="cv_val",
+                    patient_ids=val_patient_ids,
+                    labels=val_labels,
+                    ratios=val_ratios,
+                    tau_patient=tau_patient,
+                    patch_threshold=float(patch_threshold),
+                    cases_by_id=val_cases_by_id,
+                )
+            )
+            patient_detail_rows.extend(
+                _build_patient_detail_rows(
+                    fold_i=fold_i,
+                    split="holdout",
+                    patient_ids=holdout_patient_ids,
+                    labels=holdout_labels,
+                    ratios=holdout_ratios,
+                    tau_patient=tau_patient,
+                    patch_threshold=float(patch_threshold),
+                    cases_by_id=holdout_cases_by_id,
+                )
+            )
 
         fold_metrics_path = out_dir / "patient_cv_folds_from_cv_models.json"
         holdout_folds_path = out_dir / "holdout_metrics_per_fold_from_cv_models.json"
+        patient_detail_path = out_dir / "patient_fold_details_from_cv_models.json"
     else:
         checkpoint = args.checkpoint
         if checkpoint is None:
@@ -545,7 +626,7 @@ def main() -> None:
             log_every_patients=args.log_every_patients,
             log_prefix="single/cv",
         )
-        holdout_ratios, holdout_labels, _, _ = _compute_patient_ratios(
+        holdout_ratios, holdout_labels, holdout_patient_ids, _ = _compute_patient_ratios(
             holdout_cases,
             model_type=args.model,
             device=device,
@@ -558,11 +639,14 @@ def main() -> None:
         )
 
         skf = StratifiedKFold(n_splits=args.patient_k_folds, shuffle=True, random_state=args.seed)
+        cv_cases_by_id = {c.patient_id: c for c in cv_cases}
+        holdout_cases_by_id = {c.patient_id: c for c in holdout_cases}
         for fold_i, (train_idx, val_idx) in enumerate(skf.split(cv_patient_ids, cv_labels), start=1):
             train_ratios = cv_ratios[train_idx]
             train_labels = cv_labels[train_idx]
             val_ratios = cv_ratios[val_idx]
             val_labels = cv_labels[val_idx]
+            val_patient_ids = [cv_patient_ids[int(i)] for i in val_idx.tolist()]
             tau_patient = _patient_threshold_best_f1(train_ratios, train_labels)
             val_pred = (val_ratios > tau_patient).astype(np.int64)
             metrics = _binary_metrics(val_labels, val_pred)
@@ -581,12 +665,38 @@ def main() -> None:
                 f"Fold {fold_i}: CV acc={metrics['accuracy']:.4f}, "
                 f"HoldOut acc={hm['accuracy']:.4f}"
             )
+            patient_detail_rows.extend(
+                _build_patient_detail_rows(
+                    fold_i=fold_i,
+                    split="cv_val",
+                    patient_ids=val_patient_ids,
+                    labels=val_labels,
+                    ratios=val_ratios,
+                    tau_patient=tau_patient,
+                    patch_threshold=float(patch_threshold),
+                    cases_by_id=cv_cases_by_id,
+                )
+            )
+            patient_detail_rows.extend(
+                _build_patient_detail_rows(
+                    fold_i=fold_i,
+                    split="holdout",
+                    patient_ids=holdout_patient_ids,
+                    labels=holdout_labels,
+                    ratios=holdout_ratios,
+                    tau_patient=tau_patient,
+                    patch_threshold=float(patch_threshold),
+                    cases_by_id=holdout_cases_by_id,
+                )
+            )
 
         fold_metrics_path = out_dir / "patient_cv_folds.json"
         holdout_folds_path = out_dir / "holdout_metrics_per_fold.json"
+        patient_detail_path = out_dir / "patient_fold_details.json"
 
     fold_metrics_path.write_text(json.dumps(fold_rows, indent=2))
     holdout_folds_path.write_text(json.dumps(holdout_fold_rows, indent=2))
+    patient_detail_path.write_text(json.dumps(patient_detail_rows, indent=2))
 
     keys = ["accuracy", "precision", "recall", "specificity", "f1", "tau_patient", "patch_threshold"]
     summary: dict[str, Any] = {
@@ -622,6 +732,7 @@ def main() -> None:
     _log(f"Use CV fold checkpoints: {args.use_cv_fold_checkpoints}")
     _log(f"Saved CV fold metrics to: {fold_metrics_path}")
     _log(f"Saved HoldOut-per-fold metrics to: {holdout_folds_path}")
+    _log(f"Saved patient detail rows to: {patient_detail_path}")
     _log(f"Saved summary to: {summary_path}")
     _log(
         "CV mean metrics - "
