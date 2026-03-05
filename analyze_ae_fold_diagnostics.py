@@ -153,6 +153,7 @@ def main() -> None:
     per_fold_rows: list[dict[str, Any]] = []
 
     # Evaluate each fold checkpoint on its validation fold to build error distributions.
+    print("Evaluating checkpoints on validation folds to build error distributions...")
     for fold_i, (train_sub, val_sub) in enumerate(folds, start=1):
         fold_dir = ae_root / f"fold_{fold_i}"
         ckpt = fold_dir / "autoencoder_model.pth"
@@ -177,6 +178,7 @@ def main() -> None:
         preds_local = (errors > threshold).astype(np.int64)
         local_metrics = binary_metrics(labels.astype(np.int64), preds_local)
 
+        print(f"  - Plotting histogram for fold {fold_i}...")
         hist_path = out_dir / f"ae_fold_{fold_i}_error_hist.png"
         plot_fold_histogram(
             errors,
@@ -209,6 +211,7 @@ def main() -> None:
 
     # Dedicated fold-3 plot alias for convenience.
     if 3 in fold_errors:
+        print("Plotting dedicated fold-3 anomaly histogram...")
         thr3 = float(next(r["threshold_local"] for r in per_fold_rows if r["fold"] == 3))
         plot_fold_histogram(
             fold_errors[3],
@@ -219,6 +222,7 @@ def main() -> None:
         )
 
     # Global threshold calibration from pooled out-of-fold validation errors.
+    print("Calibrating global threshold from pooled out-of-fold validation errors...")
     all_errors = np.concatenate([fold_errors[i] for i in sorted(fold_errors)])
     all_labels = np.concatenate([fold_labels[i] for i in sorted(fold_labels)])
     global_threshold, global_tpr, global_fpr = roc_threshold_optimal(all_errors, all_labels, positive_class=1)
@@ -238,6 +242,7 @@ def main() -> None:
     diagnostics_path.write_text(json.dumps(per_fold_rows, indent=2))
 
     # Healthy train counts chart.
+    print("Plotting healthy train counts chart...")
     folds_idx = [int(float(r["fold"])) for r in per_fold_rows]
     healthy_counts = [int(r["train_healthy_count"]) for r in per_fold_rows]
     fig, ax = plt.subplots(figsize=(8, 4))
@@ -251,6 +256,7 @@ def main() -> None:
     plt.close(fig)
 
     # Compare local-threshold vs global-threshold metrics.
+    print("Plotting local vs global threshold metrics comparison...")
     metric_cmp = ["accuracy", "precision", "recall", "specificity", "f1"]
     fig, axs = plt.subplots(1, len(metric_cmp), figsize=(16, 3.8), sharey=False)
     for ax, key in zip(axs, metric_cmp):
@@ -271,6 +277,7 @@ def main() -> None:
     plt.close(fig)
 
     # Robust stats summary for both models.
+    print("Computing robust stats summary...")
     robust_summary: dict[str, Any] = {"cnn": {}, "autoencoder": {}, "global_threshold": {}}
     for key in METRICS_KEYS_COMMON:
         robust_summary["cnn"][key] = robust_stats([float(r[key]) for r in cnn_metrics_rows])
@@ -292,6 +299,7 @@ def main() -> None:
     robust_path.write_text(json.dumps(robust_summary, indent=2))
 
     # Human-readable report.
+    print("Writing human-readable report...")
     rep_lines: list[str] = []
     rep_lines.append("AE fold diagnostics report")
     rep_lines.append("=========================")

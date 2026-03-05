@@ -283,10 +283,15 @@ def main() -> None:
         data[model_name] = rows
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    print("Generating fold metric lines...")
     _plot_fold_lines(args.out_dir, data)
+    print("Generating model comparison bar chart...")
     _plot_model_comparison(args.out_dir, data)
+    print("Generating patch metrics boxplot...")
     _plot_patch_metrics_boxplot(args.out_dir, data)
+    print("Generating autoencoder thresholds plot...")
     _plot_autoencoder_thresholds(args.out_dir, data)
+    print("Writing interpretation text...")
     _write_interpretation(args.out_dir / "interpretation.txt", data)
 
     print(f"Saved plots and interpretation to {args.out_dir}")

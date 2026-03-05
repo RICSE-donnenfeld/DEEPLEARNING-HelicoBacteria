@@ -32,11 +32,6 @@ slurm_io/*.out
 *.fdb_latexmk
 *.synctex.gz
 
-# Generated outputs
-output/
-slurm_io/
-mermaid/out/
-
 # IDE / OS
 .vscode/
 .idea/

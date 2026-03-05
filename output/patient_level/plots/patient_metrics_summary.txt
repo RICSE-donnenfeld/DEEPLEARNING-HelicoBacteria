@@ -1,0 +1,18 @@
+Patient-level metrics summary
+============================
+
+[cnn]
+- accuracy: CV 0.9423+-0.0170 | HoldOut-per-fold 0.8172+-0.0065
+- precision: CV 0.9241+-0.0519 | HoldOut-per-fold 0.8439+-0.0173
+- recall: CV 0.9749+-0.0308 | HoldOut-per-fold 0.7793+-0.0129
+- specificity: CV 0.9075+-0.0510 | HoldOut-per-fold 0.8552+-0.0207
+- f1: CV 0.9472+-0.0190 | HoldOut-per-fold 0.8101+-0.0053
+- tau_patient (CV): 0.0755+-0.0073
+
+[autoencoder]
+- accuracy: CV 0.7744+-0.0556 | HoldOut-per-fold 0.6966+-0.0675
+- precision: CV 0.7518+-0.0308 | HoldOut-per-fold 0.6860+-0.0750
+- recall: CV 0.8960+-0.0446 | HoldOut-per-fold 0.7586+-0.0218
+- specificity: CV 0.5995+-0.1748 | HoldOut-per-fold 0.6345+-0.1516
+- f1: CV 0.8165+-0.0224 | HoldOut-per-fold 0.7172+-0.0383
+- tau_patient (CV): 0.1446+-0.0595

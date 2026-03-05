@@ -434,18 +434,33 @@ def main() -> None:
     cnn_detail_rows = _load_json(cnn_detail_path)
     ae_detail_rows = _load_json(ae_detail_path)
 
+    print("Generating fold metrics lines...")
     _plot_model_fold_metrics("cnn", cnn_cv_rows, cnn_ho_rows, out_dir)
     _plot_model_fold_metrics("autoencoder", ae_cv_rows, ae_ho_rows, out_dir)
+    
+    print("Generating cross-model CV bar comparison...")
     _plot_cross_model_comparison(cnn_cv_rows, ae_cv_rows, out_dir)
+    
+    print("Generating patient-level ROC and PR curves...")
     _plot_patient_roc_pr(cnn_detail_rows, ae_detail_rows, out_dir)
+    
+    print("Generating patient-level threshold sweeps...")
     _plot_tau_sweep("cnn", cnn_detail_rows, out_dir)
     _plot_tau_sweep("ae", ae_detail_rows, out_dir)
+    
+    print("Generating confusion matrices...")
     _plot_confusion_matrices("cnn", cnn_cv_rows, cnn_ho_rows, out_dir)
     _plot_confusion_matrices("ae", ae_cv_rows, ae_ho_rows, out_dir)
+    
+    print("Generating ratio distributions...")
     _plot_ratio_distributions("cnn", cnn_detail_rows, out_dir)
     _plot_ratio_distributions("ae", ae_detail_rows, out_dir)
+    
+    print("Generating error by burden plots...")
     _plot_error_by_burden("cnn", cnn_detail_rows, out_dir)
     _plot_error_by_burden("ae", ae_detail_rows, out_dir)
+    
+    print("Writing text summary...")
     _write_summary_text(
         cnn_cv_rows,
         ae_cv_rows,

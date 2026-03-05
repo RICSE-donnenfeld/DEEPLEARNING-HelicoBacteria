@@ -14,6 +14,7 @@
 \usepackage{listings}
 \usepackage{xcolor}
 \usepackage{siunitx}
+\setlength{\emergencystretch}{3em}
 
 \hypersetup{
   colorlinks=true,
@@ -200,11 +201,32 @@ The CNN started as a minimal classifier: three small convolutional blocks (3$\to
 The autoencoder began with a shallower encoder (32$\to$64$\to$128$\to$256$\to$256 channels, 8$\times$8 bottleneck) and ReLU activations. To avoid losing information in the bottleneck (ReLU zeros negatives), ReLU was replaced by LeakyReLU. The encoder and decoder were then deepened and widened (64$\to$128$\to$256$\to$512$\to$512 channels, 8$\times$8$\times$512 bottleneck) to improve reconstruction of healthy tissue so that anomalous patches yield higher error. The anomaly score was extended with a \texttt{max\_local} option (maximum over $8\times8$ spatial cell means) so that focal H.\textit{ pylori} regions drive the score. Checkpoint selection was fixed to keep the best model by validation loss instead of the last epoch, and the default aggregation and epoch count were set to \texttt{max\_local} and 35 (overridable via Slurm).
 
 \subsection{Code structure}
-The codebase is organised as follows: \texttt{model\_classifier.py} defines and trains the CNN; \texttt{model\_autoencoder.py} defines and trains the autoencoder (including ROC-based threshold selection); \texttt{src/helico/cv\_utils.py} contains shared patient-level split and metric helpers used by both models; \texttt{compare\_patch\_classifiers.py} evaluates both models on the same validation split and saves confusion-matrix and ROC figures.
+Core scripts:
+\begin{itemize}
+  \item \texttt{model\_classifier.py}: CNN definition, training, and evaluation.
+  \item \texttt{model\_autoencoder.py}: AE training and ROC-based patch threshold selection.
+  \item \texttt{src/helico/cv\_utils.py}: shared patient-level split and metric helpers.
+  \item \texttt{compare\_patch\_classifiers.py}: side-by-side patch-level comparison.
+\end{itemize}
 
-Patient-level diagnosis is implemented in \texttt{patient\_level\_pipeline.py}. This script supports two modes: (i) single-checkpoint mode, and (ii) fold-consistent mode (\texttt{--use-cv-fold-checkpoints}) that loads fold-specific models from \texttt{cv/cnn/fold\_i/} and \texttt{cv/autoencoder/fold\_i/} (including AE fold thresholds). Outputs are written under \texttt{output/patient\_level/<model>/}: fold metrics, Hold-out-per-fold metrics, and summary statistics.
+Patient-level diagnosis is implemented in \texttt{patient\_level\_pipeline.py}. The script supports:
+\begin{itemize}
+  \item single-checkpoint mode;
+  \item fold-consistent mode (\texttt{--use-cv-fold-checkpoints}) with models from \texttt{cv/cnn/fold\_i/} and \texttt{cv/autoencoder/fold\_i/}.
+\end{itemize}
+Outputs are written under \texttt{output/patient\_level/}: fold metrics, Hold-out-per-fold metrics, patient-level detail rows, and summary statistics.
 
-Training on a GPU cluster is launched via \texttt{train\_classifier.sbatch.sh} and \texttt{train\_autoencoder.sbatch.sh} (legacy \texttt{train.sbatch.sh} is kept as a compatibility script). Patient-level jobs are launched via \texttt{patient\_cnn\_fold.sbatch.sh}, \texttt{patient\_autoencoder\_fold.sbatch.sh}, and \texttt{patient\_plots.sbatch.sh}. Dataset paths follow the \texttt{HelicoDataSet/} layout (CrossValidation/Annotated, CrossValidation/Cropped, HoldOut). Diagnostics scripts (\texttt{analyze\_cv\_metrics.py}, \texttt{analyze\_ae\_fold\_diagnostics.py}, \texttt{analyze\_patient\_level\_metrics.py}) produce plots and robust-statistics summaries.
+Cluster scripts:
+\begin{itemize}
+  \item training: \texttt{train\_classifier.sbatch.sh}, \texttt{train\_autoencoder.sbatch.sh} (legacy \texttt{train.sbatch.sh});
+  \item patient-level: \texttt{patient\_cnn\_fold.sbatch.sh}, \texttt{patient\_autoencoder\_fold.sbatch.sh}, \texttt{patient\_plots.sbatch.sh};
+  \item diagnostics:
+  \begin{itemize}
+    \item \texttt{analyze\_cv\_metrics.py}
+    \item \texttt{analyze\_ae\_fold\_diagnostics.py}
+    \item \texttt{analyze\_patient\_level\_metrics.py}
+  \end{itemize}
+\end{itemize}
 
 % ==========================================================
 \section{Experimental Design}
@@ -231,7 +253,7 @@ Epochs (AE) & 150 \\
 Weight decay & 0 (not used) \\
 Early stopping & not used \\
 CV protocol & patient-level 5-fold, \texttt{seed=42} \\
-Patch threshold $\tau_{patch}$ & ROC: $\arg\min_\tau \bigl(\mathrm{FPR}(\tau)^2 + (1 - \mathrm{TPR}(\tau))^2\bigr)$ (\texttt{roc\_threshold\_optimal}) \\
+Patch threshold $\tau_{patch}$ & ROC closest-to-(0,1) criterion (\texttt{roc\_threshold\_optimal}) \\
 Patient threshold $\tau_{patient}$ & per fold from CV train (best F1); applied to CV val and Hold-out \\
 \bottomrule
 \end{tabular}
@@ -249,6 +271,8 @@ Both models were evaluated with patient-level 5-fold CV. Aggregate results are r
 Table~\ref{tab:patch_results} summarises patch-level performance. Recall is TP/(TP+FN) and specificity is TN/(TN+FP). The CNN attains higher accuracy and precision; the autoencoder is slightly lower but still strong, and was trained without any positive patch labels.
 \begin{table}[H]
 \centering
+\small
+\setlength{\tabcolsep}{4pt}
 \begin{tabular}{lccccc}
 \toprule
 Method & Accuracy & Precision & Recall & Specificity & F1 \\
@@ -345,14 +369,16 @@ Fold & $\tau_{patch}$ (AE) & TPR & FPR \\
 Patient-level performance is computed by \texttt{patient\_level\_pipeline.py} in fold-consistent mode (\texttt{--use-cv-fold-checkpoints}). For each fold, the corresponding patch model is loaded, contamination ratios are computed, and $\tau_{patient}$ is fitted on fold-train patients (best F1), then applied to fold-validation and Hold-out patients. The pipeline stores fold CV metrics and Hold-out-per-fold metrics in JSON files under \texttt{output/patient\_level/}. Plots and text summaries are generated by \texttt{analyze\_patient\_level\_metrics.py}.
 \begin{table}[H]
 \centering
-\begin{tabular}{llccccc}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccccc}
 \toprule
-Split & Method & Accuracy & Precision & Recall & Specificity & F1 \\
+Split / Model & Accuracy & Precision & Recall & Specificity & F1 \\
 \midrule
-CV (mean$\pm$std) & CNN + aggregation & 0.9423$\pm$0.0170 & 0.9241$\pm$0.0519 & 0.9749$\pm$0.0308 & 0.9075$\pm$0.0510 & 0.9472$\pm$0.0190 \\
-CV (mean$\pm$std) & AE + aggregation & 0.7744$\pm$0.0556 & 0.7518$\pm$0.0308 & 0.8960$\pm$0.0446 & 0.5995$\pm$0.1748 & 0.8165$\pm$0.0224 \\
-Hold-out (per fold, mean$\pm$std) & CNN + aggregation & 0.8172$\pm$0.0065 & 0.8439$\pm$0.0173 & 0.7793$\pm$0.0129 & 0.8552$\pm$0.0207 & 0.8101$\pm$0.0053 \\
-Hold-out (per fold, mean$\pm$std) & AE + aggregation & 0.6966$\pm$0.0675 & 0.6860$\pm$0.0750 & 0.7586$\pm$0.0218 & 0.6345$\pm$0.1516 & 0.7172$\pm$0.0383 \\
+CV / CNN & 0.9423$\pm$0.0170 & 0.9241$\pm$0.0519 & 0.9749$\pm$0.0308 & 0.9075$\pm$0.0510 & 0.9472$\pm$0.0190 \\
+CV / AE & 0.7744$\pm$0.0556 & 0.7518$\pm$0.0308 & 0.8960$\pm$0.0446 & 0.5995$\pm$0.1748 & 0.8165$\pm$0.0224 \\
+Hold-out / CNN & 0.8172$\pm$0.0065 & 0.8439$\pm$0.0173 & 0.7793$\pm$0.0129 & 0.8552$\pm$0.0207 & 0.8101$\pm$0.0053 \\
+Hold-out / AE & 0.6966$\pm$0.0675 & 0.6860$\pm$0.0750 & 0.7586$\pm$0.0218 & 0.6345$\pm$0.1516 & 0.7172$\pm$0.0383 \\
 \bottomrule
 \end{tabular}
 \caption{Patient-level performance from fold-consistent aggregation (\texttt{patient\_summary.json} for CNN and AE).}

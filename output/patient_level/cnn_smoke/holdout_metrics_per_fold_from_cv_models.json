@@ -1,0 +1,72 @@
+[
+  {
+    "accuracy": 0.5,
+    "precision": 0.5,
+    "recall": 1.0,
+    "specificity": 0.0,
+    "f1": 0.6666666666666666,
+    "tp": 58.0,
+    "tn": 0.0,
+    "fp": 58.0,
+    "fn": 0.0,
+    "fold": 1.0,
+    "tau_patient": -1e-08,
+    "patch_threshold": 0.5
+  },
+  {
+    "accuracy": 0.5,
+    "precision": 0.5,
+    "recall": 1.0,
+    "specificity": 0.0,
+    "f1": 0.6666666666666666,
+    "tp": 58.0,
+    "tn": 0.0,
+    "fp": 58.0,
+    "fn": 0.0,
+    "fold": 2.0,
+    "tau_patient": -1e-08,
+    "patch_threshold": 0.5
+  },
+  {
+    "accuracy": 0.5,
+    "precision": 0.5,
+    "recall": 1.0,
+    "specificity": 0.0,
+    "f1": 0.6666666666666666,
+    "tp": 58.0,
+    "tn": 0.0,
+    "fp": 58.0,
+    "fn": 0.0,
+    "fold": 3.0,
+    "tau_patient": -1e-08,
+    "patch_threshold": 0.5
+  },
+  {
+    "accuracy": 0.5,
+    "precision": 0.5,
+    "recall": 1.0,
+    "specificity": 0.0,
+    "f1": 0.6666666666666666,
+    "tp": 58.0,
+    "tn": 0.0,
+    "fp": 58.0,
+    "fn": 0.0,
+    "fold": 4.0,
+    "tau_patient": -1e-08,
+    "patch_threshold": 0.5
+  },
+  {
+    "accuracy": 0.5,
+    "precision": 0.5,
+    "recall": 1.0,
+    "specificity": 0.0,
+    "f1": 0.6666666666666666,
+    "tp": 58.0,
+    "tn": 0.0,
+    "fp": 58.0,
+    "fn": 0.0,
+    "fold": 5.0,
+    "tau_patient": -1e-08,
+    "patch_threshold": 0.5
+  }
+]
